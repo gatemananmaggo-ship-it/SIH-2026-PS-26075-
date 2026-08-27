@@ -1,0 +1,62 @@
+CAPACITY CONNECT BACKEND
+│
+├── Authentication & Authorization
+│   ├── Signup
+│   ├── Login
+│   ├── JWT
+│   ├── Password hashing
+│   └── Role-based access
+│
+├── Users
+│   ├── Trainee
+│   ├── Trainer
+│   └── Admin
+│
+├── Profiles
+│   ├── Trainee profile
+│   └── Trainer profile
+│
+├── Courses
+│   ├── Create course
+│   ├── Update course
+│   ├── Course details
+│   └── Course resources
+│
+├── Enrollment
+│   ├── Enroll
+│   ├── My courses
+│   └── Progress
+│
+├── Trainer Library
+│   ├── Videos
+│   ├── Presentations
+│   ├── PDFs
+│   └── Study material
+│
+├── Assessments
+│   ├── MCQs
+│   ├── Questionnaires
+│   ├── Deadlines
+│   ├── Submission
+│   └── Results
+│
+├── Feedback
+│
+├── Certificates
+│
+├── Competency Mapping
+│   ├── Skills
+│   ├── Subject requirements
+│   └── Trainer matching
+│
+├── Notifications
+│   ├── Announcements
+│   ├── Achievements
+│   └── New content
+│
+└── Admin Dashboard
+    ├── User approval
+    ├── Role management
+    ├── Course statistics
+    ├── Enrollment statistics
+    └── Assessment statistics

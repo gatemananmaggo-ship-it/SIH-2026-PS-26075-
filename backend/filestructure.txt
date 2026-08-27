@@ -1,0 +1,52 @@
+backend/
+│
+├── src/
+│   ├── config/
+│   │   └── db.js
+│   │
+│   ├── controllers/
+│   │   ├── auth.controller.js
+│   │   ├── user.controller.js
+│   │   ├── course.controller.js
+│   │   ├── enrollment.controller.js
+│   │   ├── assessment.controller.js
+│   │   ├── feedback.controller.js
+│   │   ├── notification.controller.js
+│   │   └── admin.controller.js
+│   │
+│   ├── models/
+│   │   ├── User.js
+│   │   ├── Course.js
+│   │   ├── Enrollment.js
+│   │   ├── Assessment.js
+│   │   ├── Submission.js
+│   │   ├── Feedback.js
+│   │   ├── Certificate.js
+│   │   ├── Resource.js
+│   │   └── Notification.js
+│   │
+│   ├── routes/
+│   │   ├── auth.routes.js
+│   │   ├── user.routes.js
+│   │   ├── course.routes.js
+│   │   ├── enrollment.routes.js
+│   │   ├── assessment.routes.js
+│   │   ├── feedback.routes.js
+│   │   ├── notification.routes.js
+│   │   └── admin.routes.js
+│   │
+│   ├── middleware/
+│   │   ├── auth.middleware.js
+│   │   ├── role.middleware.js
+│   │   └── error.middleware.js
+│   │
+│   ├── utils/
+│   │   ├── generateToken.js
+│   │   └── hashPassword.js
+│   │
+│   ├── app.js
+│   └── server.js
+│
+├── .env
+├── package.json
+└── README.md
