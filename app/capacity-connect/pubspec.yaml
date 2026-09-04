@@ -1,0 +1,41 @@
+name: capacity_connect_trainee
+description: "CAPACITY CONNECT — Trainee mobile app. MoES / IMD Digital Capacity Building & LMS Portal. SIH 2026 (Problem Statement 26075)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State management
+  provider: ^6.1.2
+
+  # Local persistence (mirrors the web app's localStorage behaviour)
+  shared_preferences: ^2.2.3
+
+  # Typography — Inter (body) + Outfit (headings), matching the web app's tailwind.config.js
+  google_fonts: ^6.2.1
+
+  # Course video playback
+  video_player: ^2.9.1
+
+  # Certificate-earned celebration (mirrors canvas-confetti on the web)
+  confetti: ^0.7.0
+
+  # Share certificate image / resource links
+  share_plus: ^10.0.0
+
+  # Footer institution / helpdesk links
+  url_launcher: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
