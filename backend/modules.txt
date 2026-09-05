@@ -3,7 +3,7 @@ CAPACITY CONNECT BACKEND
 ├── Authentication & Authorization
 │   ├── Signup
 │   ├── Login
-│   ├── JWT
+│   ├── express session
 │   ├── Password hashing
 │   └── Role-based access
 │
@@ -59,4 +59,4 @@ CAPACITY CONNECT BACKEND
     ├── Role management
     ├── Course statistics
     ├── Enrollment statistics
-    └── Assessment statistics
+    └── Assessment statistics

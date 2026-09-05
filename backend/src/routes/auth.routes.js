@@ -5,6 +5,7 @@ const express = require('express');
 const {registerUser,loginUser,logoutUser} = require("../controllers/auth.controller")
 const authMiddleware = require("../middlewares/auth.middleware")
 
+
 // Creating Router
 const authrouter = express.Router()
 
@@ -23,9 +24,15 @@ authrouter.post("/login", loginUser);
 // ===============================
 
 // Check current session
-authrouter.get("/session", (req, res) => {
-    res.json({
-        session: req.session
+authrouter.get("/session", authMiddleware, (req, res) => {
+    res.status(200).json({
+        authenticated: true,
+        user: {
+            id: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+            role: req.user.role
+        }
     });
 });
 
@@ -38,10 +45,10 @@ authrouter.post("/logout", logoutUser);
 
 // Test protected route
 authrouter.get('/protected',authMiddleware,(req,res)=>{
-    console.log("SESSION:", req.session);
-    console.log("USER:", req.user);
+    // console.log("SESSION:", req.session);
+    // console.log("USER:", req.user);
     res.status(200).json({
-        mesage:"You have access to protected route",
+        message:"You have access to protected route",
         user: {
             id: req.user._id,
             name: req.user.name,
@@ -50,5 +57,7 @@ authrouter.get('/protected',authMiddleware,(req,res)=>{
         }
     });
 });
+
+
 
 module.exports=authrouter

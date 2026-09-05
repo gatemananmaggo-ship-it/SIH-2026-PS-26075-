@@ -7,13 +7,22 @@ const User = require('../models/user');
 
 const registerUser = async (req, res)=>{
     try {
-        const { name , email , password} = req.body;
+        const { name , email , password,role} = req.body;
 
         // 1. Validating fields
-        if(!name || !email || !password)
+        if(!name || !email || !password){
             return res.status(400).json({
                 message: "Name, email and password are required"
             });
+
+        }
+        // Validate role 
+        if(role && !["trainee","trainer"].includes(role)){
+            return res.status(400).json({
+                message: "Invalid regigtration role"
+            });
+        }
+
 
         // 2. Check wether user already exist or not
         const existUser = await User.findOne({email});
@@ -31,7 +40,8 @@ const registerUser = async (req, res)=>{
         const user = await User.create({
             name,
             email,
-            password:hash_pass
+            password:hash_pass,
+            role: role || "trainee"
         });
 
         //5. Sending User fields as response
@@ -82,10 +92,16 @@ const loginUser = async (req,res)=>{
             });
         }
 
-        // 4. Check if account is active
+        // 4. Check if account is active and approved
         if (!user.isActive) {
             return res.status(403).json({
                 message: "Your account has been deactivated"
+            });
+        }
+
+        if (user.role !== "admin" && !user.isApproved) {
+            return res.status(403).json({
+                message: "Your account is awaiting admin approval"
             });
         }
 
@@ -106,7 +122,7 @@ const loginUser = async (req,res)=>{
             }
         });
     }catch(err){
-        console.error("Login error:", err);
+        console.log("Login error:", err);
 
         res.status(500).json({
             message: "Server error"
@@ -119,7 +135,7 @@ const logoutUser = async (req,res)=>{
     // destroying session
     req.session.destroy((err)=>{
         if(err){
-            console.error("Logout error", err)
+            console.log("Logout error", err)
     
             return res.status(500).json({
                 message:"Could not logout"

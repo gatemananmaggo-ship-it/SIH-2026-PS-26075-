@@ -8,8 +8,9 @@ const User = require("../models/user");
 const authMiddleware = async (req,res,next) =>{
     try {
 
-        console.log("SESSION:", req.session);
-        console.log("SESSION USER ID:", req.session?.userId);
+        // console.log("SESSION:", req.session);
+        // console.log("SESSION USER ID:", req.session?.userId);
+        
         // Check if user has a session or not
         if(!req.session || !req.session.userId){
             return res.status(401).json({

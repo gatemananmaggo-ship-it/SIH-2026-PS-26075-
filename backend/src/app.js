@@ -1,17 +1,25 @@
 // External module
 require("dotenv").config();
 
+
+const rateLimit = require("express-rate-limit");
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
 const MongoStore = require("connect-mongo").default;
 
-
-// core
-const path = require('path')
-
 // Local Module
 const authrouter = require('./routes/auth.routes')
+const traineerouter = require('./routes/trainee.routes')
+const trainerrouter = require('./routes/trainer.routes')
+const trainerLibraryrouter = require('./routes/trainerLibrary.routes')
+const adminrouter = require('./routes/admin.routes')
+const courserouter = require('./routes/course.routes')
+const trainersessionrouter = require('./routes/trainerSession.routes')
+const traineeSessionRouter = require('./routes/traineeSession.routes')
+const notificationrouter = require('./routes/notification.routes')
+const homepagerouter = require('./routes/homepage.routes')
+const competencyrouter = require('./routes/competency.routes')
 
 // Creating app
 const app = express();
@@ -49,11 +57,41 @@ app.use(
     })
 );
 
-app.use("/api/auth", authrouter);
+// rate limiter
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        message: "Too many authentication attempts. Please try again later."
+    }
+});
+
+// Auth Middleware
+app.use("/api/auth",authLimiter, authrouter);
+
+// Trainee Middleware
+app.use("/api/trainee", traineerouter);
+app.use("/api/trainee/sessions", traineeSessionRouter);
+
+// Trainer Middleware
+app.use("/api/trainer", trainerrouter);
+app.use("/api/trainer/library", trainerLibraryrouter);
+app.use("/api/trainer", courserouter);
+app.use("/api/trainer/sessions", trainersessionrouter);
+
+// Admin Middleware
+app.use("/api/admin", adminrouter);
+app.use("/api/admin/notifications", notificationrouter);
+app.use("/api/admin/competencies", competencyrouter);
+
+// Homepage Middleware
+app.use("/api/homepage", homepagerouter);
 
 app.get('/',(req,res,next)=>{
     res.send({
-        mesage: "capacity connect backend is live"
+        message: "capacity connect backend is live"
     })
 });
 
