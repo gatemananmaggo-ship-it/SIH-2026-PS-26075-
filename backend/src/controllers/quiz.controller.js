@@ -592,11 +592,74 @@ const getTraineeQuiz = async (req, res) => {
                 questions: safeQuestions
             }
         });
-
     } catch (err) {
-
         console.log("Error in getting trainee quiz:", err);
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
+};
 
+// Get all published quizzes for a course (so trainee can discover real quiz IDs)
+const getTraineeCourseQuizzes = async (req, res) => {
+    try {
+        const traineeId = req.user._id;
+        const { courseId } = req.params;
+
+        if (!isValidObjectId(courseId)) {
+            return res.status(400).json({
+                message: "Invalid course ID"
+            });
+        }
+
+        const course = await Course.findOne({
+            _id: courseId,
+            status: "published"
+        });
+
+        if (!course) {
+            return res.status(404).json({
+                message: "Published course not found"
+            });
+        }
+
+        const enrollment = await Enrollment.findOne({
+            traineeId,
+            courseId,
+            status: { $in: ["active", "completed"] }
+        });
+
+        if (!enrollment) {
+            return res.status(403).json({
+                message: "You are not enrolled in this course"
+            });
+        }
+
+        const quizzes = await Quiz.find({
+            courseId,
+            isPublished: true
+        }).select("_id title description passingMarks courseId createdAt questions");
+
+        const safeQuizzes = quizzes.map(q => ({
+            _id: q._id,
+            id: q._id,
+            courseId: q.courseId,
+            courseTitle: course.title,
+            title: q.title,
+            description: q.description,
+            passingMarks: q.passingMarks,
+            passingScore: q.passingMarks,
+            durationMinutes: 15,
+            totalQuestions: q.questions ? q.questions.length : 0,
+            questionsCount: q.questions ? q.questions.length : 0
+        }));
+
+        return res.status(200).json({
+            message: "Quizzes fetched successfully",
+            quizzes: safeQuizzes
+        });
+    } catch (err) {
+        console.log("Error in getting trainee course quizzes:", err);
         return res.status(500).json({
             message: "Server error"
         });
@@ -763,7 +826,6 @@ const submitQuizAttempt = async (req,res)=>{
     }
 }
 
-
 module.exports = {
     createQuiz,
     addQuestion,
@@ -772,6 +834,7 @@ module.exports = {
     publishQuiz,
     deleteQuiz,
     getTraineeQuiz,
+    getTraineeCourseQuizzes,
     submitQuizAttempt,
     getQuizResults
 };

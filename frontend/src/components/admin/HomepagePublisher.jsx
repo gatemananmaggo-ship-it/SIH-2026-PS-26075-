@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   Bell, 
@@ -12,40 +12,128 @@ import {
   Layers, 
   Eye, 
   Megaphone,
-  Radio
+  Radio,
+  Pin
 } from 'lucide-react';
+import { 
+  getNotificationsApi, 
+  createNotificationApi, 
+  deleteNotificationApi 
+} from '../../services/admin';
+import { Pagination } from '../common/Pagination';
+import { LoadingSpinner } from '../common/LoadingSpinner';
 
 export const HomepagePublisher = () => {
-  const { announcements, addAnnouncement, deleteAnnouncement, showToast } = useApp();
+  const { announcements: demoAnnouncements, addAnnouncement: demoAdd, deleteAnnouncement: demoDelete, showToast, isDemoMode } = useApp();
   const [showModal, setShowModal] = useState(false);
 
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState('Urgent Circular');
+  const [category, setCategory] = useState('announcement');
   const [urgent, setUrgent] = useState(false);
   const [publishedBy, setPublishedBy] = useState('MoES Training & Capacity Cell');
   const [summary, setSummary] = useState('');
   const [linkText, setLinkText] = useState('View Guidelines');
 
-  const handlePublish = (e) => {
+  // Real backend notifications state
+  const [realNotifications, setRealNotifications] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, limit: 6, total: 0, totalPages: 1 });
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isDemoMode) {
+      loadNotifications(1);
+    }
+  }, [isDemoMode]);
+
+  const loadNotifications = async (page = 1) => {
+    setLoading(true);
+    try {
+      const res = await getNotificationsApi({ page, limit: 6 });
+      if (res) {
+        setRealNotifications(res.notifications || []);
+        setPagination({
+          page: res.page || page,
+          limit: res.limit || 6,
+          total: res.total || 0,
+          totalPages: res.totalPages || 1
+        });
+      }
+    } catch (err) {
+      console.log('Error loading notifications:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePublish = async (e) => {
     e.preventDefault();
     if (!title.trim() || !summary.trim()) return;
 
-    addAnnouncement({
-      id: `ann-${Date.now()}`,
-      title: title.trim(),
-      category,
-      date: new Date().toISOString().split('T')[0],
-      urgent,
-      publishedBy: publishedBy.trim() || 'MoES Training Cell',
-      summary: summary.trim(),
-      linkText: linkText.trim() || 'Read Circular',
-      targetRole: 'all'
-    });
+    if (isDemoMode) {
+      demoAdd({
+        id: `ann-${Date.now()}`,
+        title: title.trim(),
+        category,
+        date: new Date().toISOString().split('T')[0],
+        urgent,
+        publishedBy: publishedBy.trim() || 'MoES Training Cell',
+        summary: summary.trim(),
+        linkText: linkText.trim() || 'Read Circular',
+        targetRole: 'all'
+      });
+      setTitle('');
+      setSummary('');
+      setShowModal(false);
+      showToast('Announcement published (Demo Mode)', 'success');
+      return;
+    }
 
-    setTitle('');
-    setSummary('');
-    setShowModal(false);
+    // Map to backend schema: type must be 'announcement', 'achievement', or 'new_content'
+    let backendType = 'announcement';
+    if (category === 'achievement') backendType = 'achievement';
+    else if (category === 'new_content' || category === 'New Course') backendType = 'new_content';
+
+    setSubmitting(true);
+    try {
+      await createNotificationApi({
+        type: backendType,
+        title: title.trim(),
+        body: summary.trim(),
+        isPinned: urgent,
+        isActive: true
+      });
+
+      showToast('Broadcast published to homepage successfully!', 'success');
+      setTitle('');
+      setSummary('');
+      setShowModal(false);
+      loadNotifications(1);
+    } catch (err) {
+      showToast(err.message || 'Failed to publish notification', 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const handleDelete = async (item) => {
+    const id = item._id || item.id;
+    if (isDemoMode) {
+      demoDelete(id);
+      showToast('Announcement removed (Demo Mode)', 'info');
+      return;
+    }
+
+    try {
+      await deleteNotificationApi(id);
+      showToast('Notification unpublished from homepage', 'success');
+      loadNotifications(pagination.page);
+    } catch (err) {
+      showToast(err.message || 'Failed to delete notification', 'error');
+    }
+  };
+
+  const displayList = isDemoMode ? demoAnnouncements : realNotifications;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -78,57 +166,87 @@ export const HomepagePublisher = () => {
       <div className="space-y-4">
         <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
           <Radio className="w-4 h-4 text-emerald-500" />
-          <span>Live Broadcasts Active on Homepage ({announcements.length})</span>
+          <span>Live Broadcasts Active on Homepage ({isDemoMode ? demoAnnouncements.length : pagination.total})</span>
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {announcements.map(item => (
-            <div
-              key={item.id}
-              className={`glass-card p-6 rounded-2xl border shadow-sm flex flex-col justify-between space-y-4 relative ${
-                item.urgent 
-                  ? 'border-red-300 dark:border-red-900/60 bg-red-50/20 dark:bg-red-950/20' 
-                  : 'border-slate-200 dark:border-slate-800'
-              }`}
-            >
-              {item.urgent && (
-                <span className="absolute top-0 right-0 bg-red-600 text-white text-[9px] font-bold uppercase px-3 py-1 rounded-bl-xl">
-                  Live Emergency Broadcast
-                </span>
-              )}
+        {loading ? (
+          <div className="p-8 text-center"><LoadingSpinner text="Loading broadcasts..." /></div>
+        ) : displayList.length === 0 ? (
+          <div className="p-8 text-center text-slate-500 glass-card rounded-2xl border border-slate-200 dark:border-slate-800">
+            No live broadcasts currently published. Click "Publish Broadcast" to create one.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {displayList.map(item => {
+              const id = item._id || item.id;
+              const isUrgent = item.isPinned !== undefined ? item.isPinned : item.urgent;
+              const itemType = item.type || item.category || 'announcement';
+              const textBody = item.body || item.summary || '';
+              const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : (item.date || 'Recent');
 
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                    {item.category}
-                  </span>
-                  <span className="text-[11px] text-slate-400">{item.date}</span>
-                </div>
-
-                <h4 className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
-                  {item.title}
-                </h4>
-
-                <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                  {item.summary}
-                </p>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-[11px] text-slate-500">Source: <strong>{item.publishedBy}</strong></span>
-                <button
-                  onClick={() => deleteAnnouncement(item.id)}
-                  className="text-red-500 hover:text-red-700 flex items-center gap-1 font-semibold text-xs p-1"
-                  title="Remove broadcast"
+              return (
+                <div
+                  key={id}
+                  className={`glass-card p-6 rounded-2xl border shadow-sm flex flex-col justify-between space-y-4 relative ${
+                    isUrgent 
+                      ? 'border-red-300 dark:border-red-900/60 bg-red-50/20 dark:bg-red-950/20' 
+                      : 'border-slate-200 dark:border-slate-800'
+                  }`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Unpublish</span>
-                </button>
-              </div>
+                  {isUrgent && (
+                    <span className="absolute top-0 right-0 bg-red-600 text-white text-[9px] font-bold uppercase px-3 py-1 rounded-bl-xl flex items-center gap-1">
+                      <Pin className="w-2.5 h-2.5" />
+                      Live Emergency Broadcast
+                    </span>
+                  )}
 
-            </div>
-          ))}
-        </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        {itemType}
+                      </span>
+                      <span className="text-[11px] text-slate-400">{dateStr}</span>
+                    </div>
+
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
+                      {item.title}
+                    </h4>
+
+                    <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
+                      {textBody}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-slate-500">Source: <strong>{item.publishedBy || 'MoES Admin'}</strong></span>
+                    <button
+                      onClick={() => handleDelete(item)}
+                      className="text-red-500 hover:text-red-700 flex items-center gap-1 font-semibold text-xs p-1"
+                      title="Remove broadcast"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Unpublish</span>
+                    </button>
+                  </div>
+
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!isDemoMode && pagination.totalPages > 1 && (
+          <div className="pt-2">
+            <Pagination
+              page={pagination.page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={pagination.limit}
+              onPageChange={loadNotifications}
+            />
+          </div>
+        )}
       </div>
 
       {/* Publish Modal */}
@@ -228,9 +346,10 @@ export const HomepagePublisher = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md"
+                  disabled={submitting}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md disabled:opacity-50"
                 >
-                  Broadcast to Homepage
+                  {submitting ? 'Publishing...' : 'Broadcast to Homepage'}
                 </button>
               </div>
             </form>

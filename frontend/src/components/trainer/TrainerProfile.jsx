@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { UserCheck, Star, Award, BookOpen, Save, Plus, Trash2, ShieldCheck, Building, MapPin } from 'lucide-react';
+import { UserCheck, Star, Award, BookOpen, Save, Plus, Trash2, ShieldCheck, Building, MapPin, CheckCircle, AlertCircle } from 'lucide-react';
+import { getTrainerProfileApi, updateTrainerProfileApi, createTrainerProfileApi } from '../../services/trainer';
 
 export const TrainerProfile = () => {
-  const { currentUser, updateTraineeProfile } = useApp();
-
+  const { currentUser, isDemoMode } = useApp();
+  
   const [name, setName] = useState(currentUser?.name || '');
   const [designation, setDesignation] = useState(currentUser?.designation || '');
   const [department, setDepartment] = useState(currentUser?.department || '');
@@ -17,36 +18,115 @@ export const TrainerProfile = () => {
     "Severe Weather Warning Protocols"
   ]);
   const [newSpec, setNewSpec] = useState('');
+  
 
   const [publications, setPublications] = useState(currentUser?.publications || [
     "Verma, R. K. et al. (2023). 'Dual-pol Radar Algorithms for Extreme Rainfall Estimation in the Indian Subcontinent', J. Earth Sys. Sci.",
     "Verma, R. K. (2021). 'Operational Manual for IMD C-Band Polarimetric Radars', MoES Technical Bulletin."
   ]);
   const [newPub, setNewPub] = useState('');
-
-  const handleSave = (e) => {
-    e.preventDefault();
-    updateTraineeProfile({
-      name,
-      designation,
-      department,
-      organization,
-      bio,
-      specializations,
-      publications
-    });
-  };
+  const [saving, setSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState(null);
 
   const addSpec = () => {
-    if (!newSpec.trim() || specializations.includes(newSpec.trim())) return;
-    setSpecializations([...specializations, newSpec.trim()]);
+    const spec = newSpec.trim();
+
+    if (!spec) return;
+
+    if (specializations.includes(spec)) {
+      setNewSpec('');
+      return;
+    }
+
+    setSpecializations(prev => [...prev, spec]);
     setNewSpec('');
   };
 
   const addPub = () => {
-    if (!newPub.trim()) return;
-    setPublications([...publications, newPub.trim()]);
+    const pub = newPub.trim();
+
+    if (!pub) return;
+
+    if (publications.includes(pub)) {
+      setNewPub('');
+      return;
+    }
+
+    setPublications(prev => [...prev, pub]);
     setNewPub('');
+  };
+
+  useEffect(() => {
+    if (!isDemoMode) {
+      loadProfile();
+    }
+  }, [isDemoMode]);
+
+  const loadProfile = async () => {
+    try {
+      const res = await getTrainerProfileApi();
+      if (res && res.profile) {
+        if (res.profile.bio) setBio(res.profile.bio);
+        if (res.profile.expertise && res.profile.expertise.length > 0) {
+          setSpecializations(res.profile.expertise);
+        } else if (res.profile.skills && res.profile.skills.length > 0) {
+          setSpecializations(res.profile.skills);
+        }
+        if (res.profile.workExperience && res.profile.workExperience.length > 0) {
+          const exp = res.profile.workExperience[0];
+          if (exp.designation) setDesignation(exp.designation);
+          if (exp.organization) setOrganization(exp.organization);
+          if (exp.description) setDepartment(exp.description);
+        }
+      }
+    } catch (err) {
+      // 404 is normal if profile not yet created
+      console.log("No existing trainer profile found in backend, will create on save");
+    }
+  };
+
+  const handleSave = async (e) => {
+    if (e) e.preventDefault();
+    setSaving(true);
+    setStatusMsg(null);
+
+    const payload = {
+      bio,
+      expertise: specializations,
+      skills: specializations,
+      workExperience: [
+        {
+          organization: organization || 'India Meteorological Department (IMD)',
+          designation: designation || 'Meteorologist / Radar Faculty',
+          description: department || 'Radar Meteorology Division'
+        }
+      ]
+    };
+
+    if (isDemoMode) {
+      setTimeout(() => {
+        setSaving(false);
+        setStatusMsg({ type: 'success', text: 'Trainer profile updated (Demo Mode)' });
+      }, 400);
+      return;
+    }
+
+    try {
+      try {
+        await updateTrainerProfileApi(payload);
+      } catch (updateErr) {
+        if (updateErr.status === 404 || updateErr.message?.toLowerCase().includes('not found')) {
+          await createTrainerProfileApi(payload);
+        } else {
+          throw updateErr;
+        }
+      }
+      setStatusMsg({ type: 'success', text: 'Trainer profile saved successfully to backend!' });
+    } catch (err) {
+      setStatusMsg({ type: 'error', text: err.message || 'Failed to save trainer profile' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -84,14 +164,22 @@ export const TrainerProfile = () => {
 
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition"
+              disabled={saving}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
-              <span>Save Profile</span>
+              <span>{saving ? 'Saving...' : 'Save Profile'}</span>
             </button>
           </div>
         </div>
       </div>
+
+      {statusMsg && (
+        <div className={`p-4 rounded-xl text-xs font-semibold flex items-center gap-2 ${statusMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800' : 'bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'}`}>
+          {statusMsg.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          <span>{statusMsg.text}</span>
+        </div>
+      )}
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Core Details */}

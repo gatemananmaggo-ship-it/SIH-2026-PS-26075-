@@ -67,6 +67,30 @@ const traineeProfileSchema = new mongoose.Schema(
             }
         ],
 
+        designation: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
+        department: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
+        organization: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
+        regionalCenter: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+
         // Professional certificates
         certificates: [
             {

@@ -1,15 +1,17 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { INITIAL_USERS } from '../data/initialUsers';
-import { INITIAL_COURSES } from '../data/initialCourses';
-import { INITIAL_ASSESSMENTS } from '../data/initialAssessments';
-import { INITIAL_ANNOUNCEMENTS } from '../data/initialAnnouncements';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { COMPETENCY_TAXONOMY, MOCK_TRAINER_CANDIDATES, REGIONAL_IMD_CENTERS } from '../data/competencyData';
+
+import { loginApi, registerApi, getSessionApi, logoutApi } from '../services/auth';
+import { enrollCourseApi, submitFeedbackApi, getPublishedCoursesApi, getMyEnrollmentsApi, getTraineeCourseQuizzesApi } from '../services/trainee';
+import { getMyCoursesApi } from '../services/trainer';
+import { getAllUsersApi } from '../services/admin';
+import { getHomepageApi } from '../services/homepage';
 
 const AppContext = createContext();
 
 export const AppProvider = ({ children }) => {
-  // LocalStorage initialization with fallbacks
-  const getStored = (key, fallback) => {
+  // Only store preferences (theme & language) in localStorage
+  const getStoredPref = (key, fallback) => {
     try {
       const item = localStorage.getItem(`moes_cc_${key}`);
       return item ? JSON.parse(item) : fallback;
@@ -18,122 +20,59 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  const [users, setUsers] = useState(() => getStored('users', INITIAL_USERS));
-  const [courses, setCourses] = useState(() => getStored('courses', INITIAL_COURSES));
-  const [assessments, setAssessments] = useState(() => getStored('assessments', INITIAL_ASSESSMENTS));
-  const [announcements, setAnnouncements] = useState(() => getStored('announcements', INITIAL_ANNOUNCEMENTS));
-  
-  // Trainer uploaded materials store
-  const [trainerMaterials, setTrainerMaterials] = useState(() => getStored('trainer_materials', [
-    {
-      id: "mat-01",
-      trainerId: "usr-trainer-01",
-      trainerName: "Dr. Rajesh K. Verma",
-      title: "Dual-Pol Radar Doppler Spectrum Analysis Handbook (2026 Edition)",
-      domain: "Radar Meteorology",
-      fileType: "PDF",
-      fileSize: "12.4 MB",
-      uploadDate: "2026-08-10",
-      downloads: 142,
-      accessRole: "All Trainees",
-      description: "Complete reference handbook containing case studies of severe squall lines over Gangetic plains."
-    },
-    {
-      id: "mat-02",
-      trainerId: "usr-trainer-01",
-      trainerName: "Dr. Rajesh K. Verma",
-      title: "Sample NetCDF Volume Scan: Kolkata Supercell Thunderstorm (May 2024)",
-      domain: "Radar Meteorology",
-      fileType: "NetCDF",
-      fileSize: "48.2 MB",
-      uploadDate: "2026-08-14",
-      downloads: 89,
-      accessRole: "Enrolled Trainees",
-      description: "Full polarimetric radar volumetric scan data (Z_H, Z_DR, K_DP, Rho_HV) for laboratory assignment."
-    },
-    {
-      id: "mat-03",
-      trainerId: "usr-trainer-02",
-      trainerName: "Dr. P. V. Ramana",
-      title: "ADCIRC Storm Surge Grid Generation & Boundary Conditions",
-      domain: "Oceanography",
-      fileType: "PPTX",
-      fileSize: "18.7 MB",
-      uploadDate: "2026-08-18",
-      downloads: 64,
-      accessRole: "All Trainees",
-      description: "Lecture presentation slides detailing unstructured mesh generation for the Bay of Bengal coastline."
-    }
-  ]));
+  // Auth & Session State
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentRole, setCurrentRole] = useState('guest'); // 'guest' | 'trainee' | 'trainer' | 'admin'
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
-  // Live Scheduled Sessions
-  const [liveSessions, setLiveSessions] = useState(() => getStored('live_sessions', [
-    {
-      id: "sess-01",
-      title: "Interactive Masterclass: Real-Time Doppler Velocity De-aliasing",
-      trainerId: "usr-trainer-01",
-      trainerName: "Dr. Rajesh K. Verma",
-      date: "2026-08-28",
-      time: "14:30 - 16:30 IST",
-      meetUrl: "https://meet.moes.gov.in/imd-radar-masterclass-2026",
-      registeredCount: 88,
-      status: "Upcoming",
-      department: "IMD Radar Division"
-    },
-    {
-      id: "sess-02",
-      title: "Hands-on Lab: ADCIRC Storm Surge Modeling Workshop",
-      trainerId: "usr-trainer-02",
-      trainerName: "Dr. P. V. Ramana",
-      date: "2026-09-02",
-      time: "10:00 - 12:30 IST",
-      meetUrl: "https://meet.incois.gov.in/surge-workshop-09",
-      registeredCount: 62,
-      status: "Upcoming",
-      department: "INCOIS Ocean Modeling"
-    }
-  ]));
-
-  // Active Role and Logged In User
-  const [currentRole, setCurrentRole] = useState(() => getStored('current_role', 'trainee'));
-  const [currentUserId, setCurrentUserId] = useState(() => getStored('current_user_id', 'usr-trainee-01'));
-  
   // Navigation State
   const [currentView, setCurrentView] = useState('landing'); // 'landing', 'trainee', 'trainer', 'admin', 'player', 'quiz'
   const [activeCourseId, setActiveCourseId] = useState(null);
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
-  const [activeCertificate, setActiveCertificate] = useState(null); // certificate object to view in modal
-  const [activeFeedbackCourse, setActiveFeedbackCourse] = useState(null); // course object to rate
+  const [activeCertificate, setActiveCertificate] = useState(null);
+  const [activeFeedbackCourse, setActiveFeedbackCourse] = useState(null);
+  const [activeLiveSession, setActiveLiveSession] = useState(null); // { session, meetingUrl, isTrainer }
+
+  // Core Data Stores (initialized empty, loaded dynamically from real backend)
+  const [courses, setCourses] = useState([]);
+  const [assessments, setAssessments] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [trainerMaterials, setTrainerMaterials] = useState([]);
+  const [liveSessions, setLiveSessions] = useState([]);
 
   // Auth modal
-  const [authModal, setAuthModal] = useState({ isOpen: false, mode: 'login' }); // 'login' | 'signup'
+  const [authModal, setAuthModal] = useState({ isOpen: false, mode: 'login' });
 
-  // Dark Mode & Language
-  const [darkMode, setDarkMode] = useState(() => getStored('dark_mode', false));
-  const [language, setLanguage] = useState(() => getStored('language', 'en')); // 'en' | 'hi'
+  // Preferences (Theme & Language)
+  const [darkMode, setDarkMode] = useState(() => getStoredPref('dark_mode', false));
+  const [language, setLanguage] = useState(() => getStoredPref('language', 'en'));
 
   // Toast Notification System
   const [toasts, setToasts] = useState([]);
 
-  const showToast = (message, type = 'info') => {
-    const id = Date.now();
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
-  };
+  }, []);
 
-  // Sync to LocalStorage
-  useEffect(() => { localStorage.setItem('moes_cc_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('moes_cc_courses', JSON.stringify(courses)); }, [courses]);
-  useEffect(() => { localStorage.setItem('moes_cc_assessments', JSON.stringify(assessments)); }, [assessments]);
-  useEffect(() => { localStorage.setItem('moes_cc_announcements', JSON.stringify(announcements)); }, [announcements]);
-  useEffect(() => { localStorage.setItem('moes_cc_trainer_materials', JSON.stringify(trainerMaterials)); }, [trainerMaterials]);
-  useEffect(() => { localStorage.setItem('moes_cc_live_sessions', JSON.stringify(liveSessions)); }, [liveSessions]);
-  useEffect(() => { localStorage.setItem('moes_cc_current_role', JSON.stringify(currentRole)); }, [currentRole]);
-  useEffect(() => { localStorage.setItem('moes_cc_current_user_id', JSON.stringify(currentUserId)); }, [currentUserId]);
-  useEffect(() => { localStorage.setItem('moes_cc_dark_mode', JSON.stringify(darkMode)); }, [darkMode]);
-  useEffect(() => { localStorage.setItem('moes_cc_language', JSON.stringify(language)); }, [language]);
+  // Save preferences
+  useEffect(() => {
+    try {
+      localStorage.setItem('moes_cc_dark_mode', JSON.stringify(darkMode));
+    } catch {}
+  }, [darkMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('moes_cc_language', JSON.stringify(language));
+    } catch {}
+  }, [language]);
 
   // Dark mode document class sync
   useEffect(() => {
@@ -144,64 +83,269 @@ export const AppProvider = ({ children }) => {
     }
   }, [darkMode]);
 
-  const currentUser = users.find(u => u.id === currentUserId) || users[0];
+  // Load role-specific data from real backend
+  const loadUserDomainData = useCallback(async (role) => {
+    if (role === 'trainee') {
+      try {
+        const [coursesRes, enrollRes] = await Promise.allSettled([
+          getPublishedCoursesApi({ page: 1, limit: 50 }),
+          getMyEnrollmentsApi({ page: 1, limit: 50 })
+        ]);
 
-  // Quick Role Switching (For Evaluators / Demo)
+        let publishedCourses = [];
+        if (coursesRes.status === 'fulfilled' && coursesRes.value?.courses) {
+          publishedCourses = coursesRes.value.courses;
+          setCourses(publishedCourses);
+        }
+
+        let enrolledCourses = [];
+        if (enrollRes.status === 'fulfilled' && enrollRes.value?.enrollments) {
+          enrolledCourses = enrollRes.value.enrollments
+            .map(e => e.courseId)
+            .filter(Boolean);
+        }
+
+        const effectiveCourses = enrolledCourses.length > 0 ? enrolledCourses : publishedCourses;
+        if (effectiveCourses.length > 0) {
+          const quizResults = await Promise.allSettled(
+            effectiveCourses.map(c => getTraineeCourseQuizzesApi(c._id || c.id))
+          );
+
+          let realQuizzes = [];
+          quizResults.forEach((res, idx) => {
+            if (res.status === 'fulfilled' && res.value?.quizzes) {
+              const c = effectiveCourses[idx];
+              const courseQuizzes = res.value.quizzes.map(q => ({
+                ...q,
+                id: q._id || q.id,
+                courseId: c._id || c.id,
+                courseTitle: c.title,
+                creatorName: c.trainerId?.name || "MoES Faculty"
+              }));
+              realQuizzes.push(...courseQuizzes);
+            }
+          });
+
+          setAssessments(realQuizzes);
+        } else {
+          setAssessments([]);
+        }
+      } catch (e) {
+        console.log('Error fetching trainee courses & assessments:', e);
+      }
+    } else if (role === 'trainer') {
+      try {
+        const res = await getMyCoursesApi({ page: 1, limit: 50 });
+        if (res && res.courses) {
+          setCourses(res.courses);
+          const trainerAssessments = res.courses.map((c, idx) => ({
+            id: c.assessmentId || c._id || `quiz-${idx}`,
+            _id: c.assessmentId || c._id,
+            courseId: c._id || c.id,
+            courseTitle: c.title,
+            title: `${c.title} — Competency Assessment`,
+            description: c.description || `Assessment evaluating domain proficiency for ${c.title}`,
+            passingScore: 70,
+            passingMarks: 70,
+            durationMinutes: 15,
+            totalQuestions: 5,
+            creatorName: "Trainer Faculty",
+            questions: []
+          }));
+          setAssessments(prev => {
+            const custom = prev.filter(p => !trainerAssessments.some(d => (d._id && d._id === p._id) || (d.id && d.id === p.id)));
+            return [...custom, ...trainerAssessments];
+          });
+        }
+      } catch (e) {
+        console.log('Error fetching trainer courses:', e);
+      }
+    } else if (role === 'admin') {
+      try {
+        const res = await getAllUsersApi({ page: 1, limit: 50 });
+        if (res && res.users) setUsers(res.users);
+      } catch (e) {
+        console.log('Error fetching admin users:', e);
+      }
+    }
+  }, []);
+
+  // ==========================================
+  // REAL SESSION RESTORATION ON APP STARTUP
+  // ==========================================
+  const checkSession = useCallback(async () => {
+    try {
+      setAuthLoading(true);
+      const res = await getSessionApi();
+      if (res && res.authenticated && res.user) {
+        setCurrentUser({
+          ...res.user,
+          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
+        });
+        setCurrentRole(res.user.role);
+        setCurrentView(res.user.role);
+        setIsAuthenticated(true);
+        setIsDemoMode(false);
+        loadUserDomainData(res.user.role);
+      } else {
+        setCurrentUser(null);
+        setCurrentRole('guest');
+        setIsAuthenticated(false);
+      }
+    } catch {
+      // User is not logged in / session expired
+      setCurrentUser(null);
+      setCurrentRole('guest');
+      setIsAuthenticated(false);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [loadUserDomainData]);
+
+  useEffect(() => {
+    checkSession();
+  }, [checkSession]);
+
+  // Fetch Homepage Broadcasts from Backend
+  useEffect(() => {
+    const loadHomepageData = async () => {
+      try {
+        const data = await getHomepageApi();
+        const rawNotifications = data?.notifications || data?.circulars || [];
+        if (Array.isArray(rawNotifications) && rawNotifications.length > 0) {
+          setAnnouncements(rawNotifications.map((c, idx) => ({
+            id: c._id || `ann-${idx}`,
+            title: c.title || 'Official MoES Circular',
+            category: c.type || c.category || 'announcement',
+            date: c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+            urgent: !!c.isPinned,
+            publishedBy: 'MoES Training Cell',
+            summary: c.body || c.description || c.summary || c.title,
+            linkText: 'Read Circular'
+          })));
+        } else {
+          setAnnouncements([]);
+        }
+      } catch {
+        setAnnouncements([]);
+      }
+    };
+    loadHomepageData();
+  }, []);
+
+  // ==========================================
+  // AUTHENTICATION METHODS
+  // ==========================================
+  const loginUser = async (email, password) => {
+    try {
+      setAuthLoading(true);
+      const res = await loginApi(email, password);
+      if (res && res.user) {
+        const userObj = {
+          ...res.user,
+          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
+        };
+        setCurrentUser(userObj);
+        setCurrentRole(res.user.role);
+        setCurrentView(res.user.role);
+        setIsAuthenticated(true);
+        setIsDemoMode(false);
+        setAuthModal({ isOpen: false, mode: 'login' });
+        showToast(res.message || `Welcome back, ${res.user.name}!`, "success");
+        loadUserDomainData(res.user.role);
+        return { success: true, user: res.user };
+      }
+    } catch (err) {
+      const msg = err.data?.message || err.message || "Login failed. Please check your credentials.";
+      showToast(msg, "warning");
+      return { success: false, error: msg };
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const registerUser = async (userData) => {
+    try {
+      setAuthLoading(true);
+      const res = await registerApi({
+        name: userData.name,
+        email: userData.email,
+        password: userData.password,
+        role: userData.role
+      });
+
+      setAuthModal({ isOpen: true, mode: 'login' });
+      showToast(res.message || "Registration successful! Your account requires Administrator approval before you can sign in.", "success");
+      return { success: true };
+    } catch (err) {
+      const msg = err.data?.message || err.message || "Registration failed. Please check inputs.";
+      showToast(msg, "warning");
+      return { success: false, error: msg };
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const logoutUser = async () => {
+    try {
+      await logoutApi();
+    } catch {
+      // ignore
+    } finally {
+      setCurrentUser(null);
+      setCurrentRole('guest');
+      setIsAuthenticated(false);
+      setIsDemoMode(false);
+      setCurrentView('landing');
+      setCourses([]);
+      setUsers([]);
+      showToast("Logged out successfully.", "info");
+    }
+  };
+
+  // Switch role / Open Auth modal
   const switchRole = (role) => {
     if (role === 'guest') {
       setCurrentRole('guest');
-      setCurrentUserId(null);
+      setCurrentUser(null);
+      setIsDemoMode(false);
       setCurrentView('landing');
       showToast("Browsing as Guest Visitor", "info");
       return;
     }
 
-    let targetUser = users.find(u => u.role === role && u.status === 'approved');
-    if (!targetUser) {
-      targetUser = users.find(u => u.role === role);
-    }
-    
-    if (targetUser) {
-      setCurrentRole(role);
-      setCurrentUserId(targetUser.id);
-      setCurrentView(role);
-      showToast(`Switched to ${role.toUpperCase()} View (${targetUser.name})`, 'success');
-    }
+    setAuthModal({ isOpen: true, mode: 'login' });
   };
 
-  // Trainee Actions
-  const enrollCourse = (courseId) => {
-    if (!currentUser || currentUser.role !== 'trainee') {
+  // ==========================================
+  // TRAINEE ACTIONS
+  // ==========================================
+  const enrollCourse = async (courseId) => {
+    if (!currentUser || currentRole !== 'trainee') {
       setAuthModal({ isOpen: true, mode: 'login' });
       showToast("Please login as a Trainee to enroll.", "warning");
       return;
     }
 
-    if (currentUser.enrolledCourses?.includes(courseId)) {
-      showToast("Already enrolled in this course.", "info");
+    if (isDemoMode) {
+      showToast("Enrolled in demo course!", "success");
       openCoursePlayer(courseId);
       return;
     }
 
-    setUsers(prev => prev.map(u => {
-      if (u.id === currentUser.id) {
-        return {
-          ...u,
-          enrolledCourses: [...(u.enrolledCourses || []), courseId]
-        };
+    try {
+      await enrollCourseApi(courseId);
+      showToast("Successfully enrolled in course!", "success");
+      openCoursePlayer(courseId);
+    } catch (err) {
+      const msg = err.data?.message || err.message || "Enrollment failed";
+      if (err.status === 409 || msg.toLowerCase().includes("already")) {
+        showToast("Already enrolled in this course.", "info");
+        openCoursePlayer(courseId);
+      } else {
+        showToast(msg, "warning");
       }
-      return u;
-    }));
-
-    setCourses(prev => prev.map(c => {
-      if (c.id === courseId) {
-        return { ...c, enrolledCount: (c.enrolledCount || 0) + 1 };
-      }
-      return c;
-    }));
-
-    showToast("Successfully enrolled in course!", "success");
-    openCoursePlayer(courseId);
+    }
   };
 
   const openCoursePlayer = (courseId) => {
@@ -211,10 +355,10 @@ export const AppProvider = ({ children }) => {
 
   const toggleModuleProgress = (courseId, moduleId) => {
     setCourses(prev => prev.map(c => {
-      if (c.id === courseId) {
+      if (c.id === courseId || c._id === courseId) {
         return {
           ...c,
-          modules: c.modules.map(m => m.id === moduleId ? { ...m, completed: !m.completed } : m)
+          modules: (c.modules || []).map(m => (m.id === moduleId || m._id === moduleId) ? { ...m, completed: !m.completed } : m)
         };
       }
       return c;
@@ -222,17 +366,34 @@ export const AppProvider = ({ children }) => {
     showToast("Module progress updated", "info");
   };
 
-  const openQuiz = (quizId) => {
+  const openQuiz = (quizId, courseId = null) => {
     setActiveAssessmentId(quizId);
+    if (courseId) {
+      setActiveCourseId(courseId);
+    }
     setCurrentView('quiz');
   };
 
-  const submitQuizAnswers = (quizId, scorePercentage, answers) => {
-    const assessment = assessments.find(a => a.id === quizId);
+  // jaas: { appId, roomName, jwt, domain } — returned by backend after authorization
+  const startLiveClassroom = (session, jaas, isTrainer = false) => {
+    setActiveLiveSession({
+      session,
+      jaas,    // short-lived JaaS join credentials from backend
+      isTrainer
+    });
+    setCurrentView('live-session');
+  };
+
+  const exitLiveClassroom = () => {
+    setActiveLiveSession(null);
+    setCurrentView(currentRole === 'trainer' ? 'trainer' : 'trainee');
+  };
+
+  const submitQuizAnswers = (quizId, scorePercentage) => {
+    const assessment = assessments.find(a => a.id === quizId || a._id === quizId);
     const passed = scorePercentage >= (assessment?.passingScore || 70);
 
     if (passed && currentUser) {
-      // Award certificate
       const newCert = {
         id: `CERT-MOES-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
         courseId: assessment?.courseId || "crs-01",
@@ -244,19 +405,6 @@ export const AppProvider = ({ children }) => {
         verificationHash: Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 6)
       };
 
-      setUsers(prev => prev.map(u => {
-        if (u.id === currentUser.id) {
-          const existingCerts = u.certificates || [];
-          const existingCompleted = u.completedCourses || [];
-          return {
-            ...u,
-            certificates: [...existingCerts.filter(c => c.courseId !== assessment.courseId), newCert],
-            completedCourses: [...new Set([...existingCompleted, assessment.courseId])]
-          };
-        }
-        return u;
-      }));
-
       setActiveCertificate(newCert);
       showToast(`Congratulations! You passed with ${scorePercentage}%. Certificate issued!`, "success");
     } else {
@@ -266,50 +414,30 @@ export const AppProvider = ({ children }) => {
     return passed;
   };
 
-  const submitFeedback = (courseId, rating, comment) => {
-    const feedbackEntry = {
-      userName: currentUser?.name || "Anonymous Trainee",
-      userAvatar: currentUser?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
-      rating,
-      date: new Date().toISOString().split('T')[0],
-      comment
-    };
+  const submitFeedback = async (courseId, rating, comment) => {
+    if (isDemoMode) {
+      setActiveFeedbackCourse(null);
+      showToast("Thank you! Your feedback has been submitted (Demo Mode).", "success");
+      return;
+    }
 
-    setCourses(prev => prev.map(c => {
-      if (c.id === courseId) {
-        const feedbacks = c.feedbacks || [];
-        const updatedFeedbacks = [feedbackEntry, ...feedbacks];
-        const newRating = Number((updatedFeedbacks.reduce((acc, f) => acc + f.rating, 0) / updatedFeedbacks.length).toFixed(1));
-        return {
-          ...c,
-          feedbacks: updatedFeedbacks,
-          rating: newRating,
-          totalRatings: updatedFeedbacks.length
-        };
-      }
-      return c;
-    }));
-
-    setUsers(prev => prev.map(u => {
-      if (u.id === currentUser?.id) {
-        return {
-          ...u,
-          feedbacksSubmitted: [...(u.feedbacksSubmitted || []), { courseId, rating, review: comment, date: new Date().toISOString().split('T')[0] }]
-        };
-      }
-      return u;
-    }));
-
-    setActiveFeedbackCourse(null);
-    showToast("Thank you! Your feedback has been submitted.", "success");
+    try {
+      await submitFeedbackApi(courseId, { rating, comment });
+      setActiveFeedbackCourse(null);
+      showToast("Thank you! Your feedback has been submitted.", "success");
+    } catch (err) {
+      showToast(err.data?.message || "Failed to submit feedback", "warning");
+    }
   };
 
   const updateTraineeProfile = (updatedData) => {
-    setUsers(prev => prev.map(u => u.id === currentUser.id ? { ...u, ...updatedData } : u));
+    setCurrentUser(prev => prev ? { ...prev, ...updatedData } : updatedData);
     showToast("Profile updated successfully!", "success");
   };
 
-  // Trainer Actions
+  // ==========================================
+  // TRAINER ACTIONS
+  // ==========================================
   const addAssessment = (assessmentObj) => {
     setAssessments(prev => [assessmentObj, ...prev]);
     showToast(`Assessment "${assessmentObj.title}" published successfully!`, "success");
@@ -330,19 +458,21 @@ export const AppProvider = ({ children }) => {
     showToast(`Masterclass session scheduled!`, "success");
   };
 
-  // Admin Actions
+  // ==========================================
+  // ADMIN ACTIONS
+  // ==========================================
   const approveUser = (userId) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: 'approved' } : u));
+    setUsers(prev => prev.map(u => (u.id === userId || u._id === userId) ? { ...u, status: 'approved', isApproved: true } : u));
     showToast("User account approved and activated!", "success");
   };
 
   const rejectUser = (userId) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
+    setUsers(prev => prev.filter(u => (u.id !== userId && u._id !== userId)));
     showToast("User registration rejected.", "info");
   };
 
   const changeUserRole = (userId, newRole) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    setUsers(prev => prev.map(u => (u.id === userId || u._id === userId) ? { ...u, role: newRole } : u));
     showToast(`User role updated to ${newRole.toUpperCase()}`, "success");
   };
 
@@ -352,59 +482,25 @@ export const AppProvider = ({ children }) => {
   };
 
   const deleteAnnouncement = (annId) => {
-    setAnnouncements(prev => prev.filter(a => a.id !== annId));
+    setAnnouncements(prev => prev.filter(a => a.id !== annId && a._id !== annId));
     showToast("Announcement removed.", "info");
-  };
-
-  // User Registration
-  const registerUser = (userData) => {
-    const newUser = {
-      id: `usr-${Date.now()}`,
-      ...userData,
-      status: "pending", // Requires Admin approval as per problem statement
-      joinedDate: new Date().toISOString().split('T')[0],
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
-      qualifications: userData.qualifications || [],
-      skills: userData.skills || [],
-      interests: userData.interests || [],
-      experience: userData.experience || []
-    };
-
-    setUsers(prev => [...prev, newUser]);
-    setAuthModal({ isOpen: false, mode: 'login' });
-    showToast("Registration submitted! Pending Administrator approval.", "success");
-  };
-
-  // Login
-  const loginUser = (email, role) => {
-    const foundUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() || (u.role === role && u.status === 'approved'));
-    if (foundUser) {
-      if (foundUser.status === 'pending') {
-        showToast("Your account is pending Admin approval. Please check back shortly.", "warning");
-        return;
-      }
-      setCurrentRole(foundUser.role);
-      setCurrentUserId(foundUser.id);
-      setCurrentView(foundUser.role);
-      setAuthModal({ isOpen: false, mode: 'login' });
-      showToast(`Welcome back, ${foundUser.name}!`, "success");
-    } else {
-      showToast("Account not found. Please check details or sign up.", "warning");
-    }
   };
 
   return (
     <AppContext.Provider
       value={{
         users,
+        setUsers,
         courses,
+        setCourses,
         assessments,
         announcements,
         trainerMaterials,
         liveSessions,
         currentRole,
+        setCurrentRole,
         currentUser,
-        currentUserId,
+        currentUserId: currentUser?.id || currentUser?._id,
         currentView,
         setCurrentView,
         activeCourseId,
@@ -417,6 +513,9 @@ export const AppProvider = ({ children }) => {
         setActiveFeedbackCourse,
         authModal,
         setAuthModal,
+        authLoading,
+        isAuthenticated,
+        isDemoMode,
         darkMode,
         setDarkMode,
         language,
@@ -428,6 +527,9 @@ export const AppProvider = ({ children }) => {
         openCoursePlayer,
         toggleModuleProgress,
         openQuiz,
+        startLiveClassroom,
+        exitLiveClassroom,
+        activeLiveSession,
         submitQuizAnswers,
         submitFeedback,
         updateTraineeProfile,
@@ -442,6 +544,9 @@ export const AppProvider = ({ children }) => {
         deleteAnnouncement,
         registerUser,
         loginUser,
+        logoutUser,
+        checkSession,
+        refreshGlobalData: () => loadUserDomainData(currentRole),
         taxonomies: COMPETENCY_TAXONOMY,
         trainerCandidates: MOCK_TRAINER_CANDIDATES,
         regionalCenters: REGIONAL_IMD_CENTERS

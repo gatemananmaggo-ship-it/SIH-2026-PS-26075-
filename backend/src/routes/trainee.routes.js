@@ -12,6 +12,7 @@ const {getTraineeCourseLessons,markLessonComplete,getCourseProgress} = require("
 
 const {
     getTraineeQuiz,
+    getTraineeCourseQuizzes,
     submitQuizAttempt
 } = require("../controllers/quiz.controller")
 
@@ -19,6 +20,7 @@ const {
     checkCertificateEligibility,
     generateCertificate,
     getCertificate,
+    getMyCertificates,
     verifyCertificate
 } = require("../controllers/certificate.controller");
 
@@ -83,6 +85,8 @@ traineerouter.get("/courses/:courseId/progress",authMiddleware,roleMiddleware("t
 // QUIZ ROUTES
 // ==============================
 
+traineerouter.get("/courses/:courseId/quizzes", authMiddleware, roleMiddleware("trainee"), getTraineeCourseQuizzes);
+
 traineerouter.get("/courses/:courseId/quizzes/:quizId",authMiddleware, roleMiddleware("trainee"),getTraineeQuiz);
 
 traineerouter.post("/courses/:courseId/quizzes/:quizId/attempt",authMiddleware, roleMiddleware("trainee"),submitQuizAttempt);
@@ -90,6 +94,8 @@ traineerouter.post("/courses/:courseId/quizzes/:quizId/attempt",authMiddleware, 
 // ==============================
 // CERTIFICATE ROUTES
 // ==============================
+
+traineerouter.get("/certificates", authMiddleware, roleMiddleware("trainee"), getMyCertificates);
 
 traineerouter.get("/courses/:courseId/certificate/eligibility",authMiddleware,roleMiddleware("trainee"),checkCertificateEligibility);
 

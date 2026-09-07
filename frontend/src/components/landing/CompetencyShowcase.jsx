@@ -92,28 +92,36 @@ export const CompetencyShowcase = () => {
             </div>
 
             <div className="space-y-2.5">
-              {matchedTrainers.slice(0, 2).map((tr, index) => (
-                <div key={tr.id} className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
-                      index === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 ring-2 ring-amber-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-700'
-                    }`}>
-                      #{index + 1}
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">{tr.name}</h4>
-                      <p className="text-[10px] text-slate-500">{tr.organization} • {tr.experienceYears} Yrs Exp</p>
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                      {tr.score}% Match
-                    </div>
-                    <span className="text-[9px] text-slate-400">{tr.availability}</span>
-                  </div>
+              {matchedTrainers.length === 0 ? (
+                <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-center">
+                  <UserCheck className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Live Faculty Matching Active</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Faculty candidates are dynamically evaluated from database qualifications in the Admin console.</p>
                 </div>
-              ))}
+              ) : (
+                matchedTrainers.slice(0, 2).map((tr, index) => (
+                  <div key={tr._id || tr.id} className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
+                        index === 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 ring-2 ring-amber-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-700'
+                      }`}>
+                        #{index + 1}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">{tr.name}</h4>
+                        <p className="text-[10px] text-slate-500">{tr.organization} • {tr.experienceYears} Yrs Exp</p>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                        {tr.score}% Match
+                      </div>
+                      <span className="text-[9px] text-slate-400">{tr.availability}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
             <div className="pt-2 text-right">

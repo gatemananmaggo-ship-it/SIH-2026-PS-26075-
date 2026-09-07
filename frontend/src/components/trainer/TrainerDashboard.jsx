@@ -17,10 +17,26 @@ import { QuizCreator } from './QuizCreator';
 import { TrainerLibrary } from './TrainerLibrary';
 import { SessionScheduler } from './SessionScheduler';
 import { TrainerProfile } from './TrainerProfile';
+import { getTrainerAnalyticsApi } from '../../services/trainer';
 
 export const TrainerDashboard = () => {
-  const { currentUser, assessments, trainerMaterials, liveSessions } = useApp();
+  const { currentUser, assessments, trainerMaterials, liveSessions, isDemoMode } = useApp();
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'quiz-creator', 'library', 'sessions', 'profile'
+  const [backendStats, setBackendStats] = useState(null);
+
+  React.useEffect(() => {
+    if (!isDemoMode) {
+      getTrainerAnalyticsApi()
+        .then(res => {
+          if (res) setBackendStats(res);
+        })
+        .catch(err => console.log('Could not fetch trainer analytics:', err));
+    }
+  }, [isDemoMode]);
+
+  const coursesCount = backendStats ? (backendStats.totalCourses ?? 0) : assessments.length;
+  const sessionsCount = backendStats ? (backendStats.totalSessions ?? 0) : liveSessions.length;
+  const enrollmentsCount = backendStats ? (backendStats.totalEnrollments ?? 0) : trainerMaterials.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fadeIn">
@@ -41,7 +57,7 @@ export const TrainerDashboard = () => {
                 </span>
                 <span className="text-[10px] bg-amber-500/30 text-amber-300 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
                   <Star className="w-3 h-3 fill-amber-300" />
-                  <span>{currentUser?.rating || 4.9} Rating</span>
+                  <span>{backendStats?.averageRating ? Number(backendStats.averageRating).toFixed(1) : (currentUser?.rating || 4.9)} Rating</span>
                 </span>
               </div>
               <h1 className="text-xl sm:text-2xl font-bold mt-1">
@@ -56,18 +72,18 @@ export const TrainerDashboard = () => {
           {/* Quick Metrics */}
           <div className="flex items-center gap-4 bg-white/10 backdrop-blur-md px-5 py-3 rounded-2xl border border-white/10">
             <div className="text-center">
-              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">Questionnaires</span>
-              <span className="text-lg font-black text-amber-300">{assessments.length}</span>
+              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">{backendStats ? 'My Courses' : 'Questionnaires'}</span>
+              <span className="text-lg font-black text-amber-300">{coursesCount}</span>
             </div>
             <div className="w-px h-8 bg-white/20"></div>
             <div className="text-center">
-              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">Shared Files</span>
-              <span className="text-lg font-black text-sky-300">{trainerMaterials.length}</span>
+              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">{backendStats ? 'Enrollments' : 'Shared Files'}</span>
+              <span className="text-lg font-black text-sky-300">{enrollmentsCount}</span>
             </div>
             <div className="w-px h-8 bg-white/20"></div>
             <div className="text-center">
               <span className="text-[10px] text-slate-300 uppercase tracking-wider block">Live Webinars</span>
-              <span className="text-lg font-black text-emerald-400">{liveSessions.length}</span>
+              <span className="text-lg font-black text-emerald-400">{sessionsCount}</span>
             </div>
           </div>
         </div>

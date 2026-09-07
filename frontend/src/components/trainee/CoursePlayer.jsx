@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   ArrowLeft, 
@@ -17,25 +17,56 @@ import {
   Maximize2, 
   StickyNote, 
   Plus, 
-  Trash2,
-  FolderDown,
-  Sparkles,
-  Layers
+  Trash2, 
+  FolderDown, 
+  Sparkles, 
+  Layers,
+  Loader2
 } from 'lucide-react';
+
+import { 
+  getTraineeCourseLessonsApi, 
+  getCourseProgressApi, 
+  markLessonCompleteApi,
+  getTraineeCourseQuizzesApi 
+} from '../../services/trainee';
 
 export const CoursePlayer = () => {
   const { 
     courses, 
+    assessments,
     activeCourseId, 
     setCurrentView, 
-    toggleModuleProgress, 
     openQuiz, 
-    setActiveFeedbackCourse,
-    currentUser,
-    showToast
+    setActiveFeedbackCourse, 
+    currentUser, 
+    showToast,
+    isDemoMode,
+    isAuthenticated
   } = useApp();
 
-  const course = courses.find(c => c.id === activeCourseId) || courses[0];
+  const course = courses.find(c => (c.id === activeCourseId || c._id === activeCourseId)) || courses[0];
+
+  const courseAssessment = assessments?.find(a => 
+    a.courseId === (course?._id || course?.id)
+  );
+
+  const handleStartExam = async () => {
+    const cid = course?._id || course?.id;
+    let qid = courseAssessment?._id || courseAssessment?.id;
+    if (!qid && cid && !isDemoMode && isAuthenticated) {
+      try {
+        const res = await getTraineeCourseQuizzesApi(cid);
+        if (res?.quizzes?.length > 0) {
+          qid = res.quizzes[0]._id || res.quizzes[0].id;
+        }
+      } catch (e) {
+        console.log('Error fetching quizzes for course exam:', e);
+      }
+    }
+    openQuiz(qid, cid);
+  };
+
   const [activeModuleIndex, setActiveModuleIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -45,7 +76,132 @@ export const CoursePlayer = () => {
   ]);
   const [newNote, setNewNote] = useState('');
 
-  const currentModule = course?.modules?.[activeModuleIndex] || course?.modules?.[0];
+  // Live Backend Lessons & Progress
+  const [liveLessons, setLiveLessons] = useState([]);
+  const [completedLessonIds, setCompletedLessonIds] = useState([]);
+  const [courseProgress, setCourseProgress] = useState(null);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [loadingLessons, setLoadingLessons] = useState(false);
+  const [markingComplete, setMarkingComplete] = useState(false);
+
+  // Load Lessons & Progress from Backend
+  const loadLessonsAndProgress = useCallback(async () => {
+    if (!activeCourseId || isDemoMode || !isAuthenticated) return;
+    try {
+      setLoadingLessons(true);
+      const [lessonsRes, progressRes] = await Promise.allSettled([
+        getTraineeCourseLessonsApi(activeCourseId),
+        getCourseProgressApi(activeCourseId)
+      ]);
+
+      if (lessonsRes.status === 'fulfilled' && lessonsRes.value?.lessons) {
+        setLiveLessons(lessonsRes.value.lessons);
+      }
+
+      if (progressRes.status === 'fulfilled' && progressRes.value) {
+        // Backend returns:
+        // {
+        //   message: "Course progress fetched successfully",
+        //   progress: { courseId, totalLessons, completedLessons, progress, status }
+        // }
+        // Safely extract progress object and primitive values
+        const rawProgress = progressRes.value?.progress !== undefined 
+          ? progressRes.value.progress 
+          : progressRes.value;
+
+        const progressData = typeof rawProgress === 'object' && rawProgress !== null 
+          ? rawProgress 
+          : {};
+
+        setCourseProgress(progressData);
+
+        // Numerical percentage value (0-100)
+        const percent = typeof progressData.progress === 'number'
+          ? progressData.progress
+          : (typeof rawProgress === 'number' ? rawProgress : 0);
+        setProgressPercent(percent);
+
+        // Handle completed lesson IDs array
+        if (Array.isArray(progressData.completedLessons)) {
+          setCompletedLessonIds(progressData.completedLessons);
+        } else if (Array.isArray(progressRes.value?.completedLessons)) {
+          setCompletedLessonIds(progressRes.value.completedLessons);
+        }
+      }
+    } catch {
+      // Fallback to local
+    } finally {
+      setLoadingLessons(false);
+    }
+  }, [activeCourseId, isDemoMode, isAuthenticated]);
+
+  useEffect(() => {
+    loadLessonsAndProgress();
+  }, [loadLessonsAndProgress]);
+
+  // Lessons to display (Live backend or Demo fallback)
+  const displayModules = liveLessons.length > 0 ? liveLessons.map((l, idx) => ({
+    id: l._id,
+    _id: l._id,
+    title: l.title || `Lesson ${idx + 1}`,
+    duration: l.duration ? `${l.duration} mins` : "30 mins",
+    videoUrl: l.videoUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    summary: l.description || l.content || "Lesson curriculum study module.",
+    completed: completedLessonIds.includes(l._id),
+    resources: [
+      { name: `${l.title || "Lesson"}_Study_Guide.pdf`, size: "3.4 MB", type: "pdf" }
+    ]
+  })) : (course?.modules || []);
+
+  const currentModule = displayModules[activeModuleIndex] || displayModules[0];
+
+  const handleToggleComplete = async (moduleItem) => {
+    const moduleId = moduleItem?._id || moduleItem?.id;
+    if (!moduleId) return;
+
+    if (isDemoMode) {
+      showToast("Module marked completed (Demo Mode)", "success");
+      return;
+    }
+
+    try {
+      setMarkingComplete(true);
+      const res = await markLessonCompleteApi(activeCourseId, moduleId);
+
+      if (res?.completedLessons && Array.isArray(res.completedLessons)) {
+        setCompletedLessonIds(res.completedLessons);
+      } else {
+        setCompletedLessonIds(prev => prev.includes(moduleId) ? prev : [...prev, moduleId]);
+      }
+
+      if (typeof res?.progress === 'number') {
+        setProgressPercent(res.progress);
+      }
+
+      if (res) {
+        setCourseProgress(prev => ({
+          ...(prev || {}),
+          progress: typeof res.progress === 'number' ? res.progress : (prev?.progress ?? 0),
+          status: res.status || prev?.status || 'active',
+          completedLessons: Array.isArray(res.completedLessons)
+            ? res.completedLessons.length
+            : ((prev?.completedLessons ?? 0) + 1)
+        }));
+      }
+
+      showToast("Lesson marked complete!", "success");
+      loadLessonsAndProgress();
+    } catch (err) {
+      const msg = err.data?.message || err.message || "Could not update progress";
+      if (err.status === 409) {
+        showToast("Lesson is already marked completed.", "info");
+      } else {
+        showToast(msg, "warning");
+      }
+    } finally {
+      setMarkingComplete(false);
+    }
+  };
 
   const handleAddNote = () => {
     if (!newNote.trim()) return;
@@ -58,6 +214,31 @@ export const CoursePlayer = () => {
   const handleDownloadResource = (resourceName) => {
     showToast(`Downloading resource: ${resourceName}`, "success");
   };
+
+  // Safe primitive metrics extracted from courseProgress object and displayModules
+  const safeProgressPercent = typeof courseProgress?.progress === 'number'
+    ? courseProgress.progress
+    : (typeof progressPercent === 'number' ? progressPercent : 0);
+
+  const completedLessonsCount = displayModules.length > 0
+    ? displayModules.filter(m => m.completed).length
+    : (typeof courseProgress?.completedLessons === 'number'
+        ? courseProgress.completedLessons
+        : (Array.isArray(courseProgress?.completedLessons)
+            ? courseProgress.completedLessons.length
+            : completedLessonIds.length));
+
+  const totalLessonsCount = displayModules.length > 0
+    ? displayModules.length
+    : (typeof courseProgress?.totalLessons === 'number'
+        ? courseProgress.totalLessons
+        : 0);
+
+  const calculatedProgress = totalLessonsCount > 0
+    ? Math.round((completedLessonsCount / totalLessonsCount) * 100)
+    : (typeof safeProgressPercent === 'number' ? safeProgressPercent : 0);
+
+  const courseStatus = courseProgress?.status ?? (calculatedProgress === 100 ? "completed" : "in_progress");
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 animate-fadeIn">
@@ -74,9 +255,9 @@ export const CoursePlayer = () => {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-moes-600 dark:text-sky-400 bg-moes-50 dark:bg-moes-950 px-2 py-0.5 rounded border border-moes-200 dark:border-moes-800">
-                {course.domain}
+                {course.domain || course.category || "Meteorology"}
               </span>
-              <span className="text-xs text-slate-500">• {course.level} Level</span>
+              <span className="text-xs text-slate-500">• {course.level || "Standard"} Level</span>
             </div>
             <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white mt-0.5">
               {course.title}
@@ -94,112 +275,94 @@ export const CoursePlayer = () => {
             <span>Rate Course</span>
           </button>
 
-          {course.assessmentId && (
-            <button
-              onClick={() => openQuiz(course.assessmentId)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md transition"
-            >
-              <Award className="w-4 h-4" />
-              <span>Launch Subject MCQ Quiz</span>
-            </button>
-          )}
+          <button
+            onClick={handleStartExam}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md transition"
+          >
+            <Award className="w-3.5 h-3.5" />
+            <span>Take Certification Exam</span>
+          </button>
         </div>
       </div>
 
-      {/* Main Grid: Video Player + Module Syllabus Sidebar */}
+      {/* Main Grid: Video Player on Left, Syllabus on Right */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Column: Video Player & Lecture Workspace */}
+        {/* Left Column: Video Screen & Lecture Details */}
         <div className="lg:col-span-8 space-y-6">
           
-          {/* Simulated Video Player */}
-          <div className="rounded-2xl overflow-hidden shadow-2xl bg-slate-950 border border-slate-800 relative aspect-video flex flex-col justify-between group">
-            
-            {/* Real HTML5 Video element or Simulated High-Tech Canvas */}
-            <div className="relative w-full h-full flex items-center justify-center bg-gradient-to-tr from-slate-950 via-navy-950 to-slate-900">
+          {/* Video Player Card */}
+          <div className="glass-card rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-xl bg-black relative group">
+            <div className="relative aspect-video flex items-center justify-center bg-slate-950">
               <video
-                src={currentModule?.videoUrl}
+                key={currentModule?.videoUrl}
                 className="w-full h-full object-cover"
-                controls={false}
-                autoPlay={false}
-              />
-
-              {/* Overlay Play/Pause Button */}
-              <button
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="absolute w-16 h-16 rounded-full bg-moes-600/90 hover:bg-moes-500 text-white flex items-center justify-center shadow-xl backdrop-blur-md transition-transform transform hover:scale-110"
+                controls
+                poster={course.thumbnail}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => handleToggleComplete(currentModule)}
               >
-                {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
-              </button>
-
-              {/* Video Title Header Overlay */}
-              <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between text-white text-xs">
-                <span className="font-semibold">{currentModule?.title}</span>
-                <span className="bg-moes-700/80 px-2 py-0.5 rounded text-[10px] font-mono">1080p HD • MoES LMS</span>
-              </div>
+                <source src={currentModule?.videoUrl} type="video/mp4" />
+                Your browser does not support HTML5 video streaming.
+              </video>
             </div>
 
-            {/* Player Control Bar */}
-            <div className="p-3 bg-slate-900/95 border-t border-slate-800 flex items-center justify-between text-white text-xs">
+            {/* Sub-bar below video */}
+            <div className="p-4 bg-slate-900/95 border-t border-slate-800 text-white flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="text-sky-400 hover:text-white"
-                >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </button>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-300 font-mono">
-                  <span>14:28</span>
-                  <span>/</span>
-                  <span>{currentModule?.duration || "45 mins"}</span>
-                </div>
+                <span className="font-bold text-sky-400">
+                  Module {activeModuleIndex + 1} of {displayModules.length}:
+                </span>
+                <span className="text-slate-300 font-medium truncate max-w-[280px]">
+                  {currentModule?.title}
+                </span>
               </div>
 
-              {/* Speed / Volume / Fullscreen */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setPlaybackSpeed(playbackSpeed === 1 ? 1.25 : playbackSpeed === 1.25 ? 1.5 : 1)}
-                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-sky-300"
+                  onClick={() => handleToggleComplete(currentModule)}
+                  disabled={markingComplete}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                    currentModule?.completed
+                      ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                  }`}
                 >
-                  {playbackSpeed}x Speed
+                  {markingComplete ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>{currentModule?.completed ? "Completed" : "Mark as Complete"}</span>
                 </button>
-                <Volume2 className="w-4 h-4 text-slate-300 hover:text-white cursor-pointer" />
-                <Maximize2 className="w-4 h-4 text-slate-300 hover:text-white cursor-pointer" />
               </div>
             </div>
-
           </div>
 
-          {/* Module Description & Progress Toggle */}
-          <div className="glass-card rounded-2xl p-6 border border-slate-200 dark:border-slate-800 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+          {/* Module Description & Meta */}
+          <div className="glass-card rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-md space-y-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                   {currentModule?.title}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Instructor: <strong>{course.trainerName}</strong> • {course.trainerRole}
-                </p>
+                </h2>
+                <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-moes-500" />
+                    <span>Duration: {currentModule?.duration}</span>
+                  </span>
+                  <span>•</span>
+                  <span>Curriculum Code: MOES-2026-LEC-{activeModuleIndex + 1}</span>
+                </div>
               </div>
-
-              <button
-                onClick={() => toggleModuleProgress(course.id, currentModule?.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
-                  currentModule?.completed
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 border border-slate-300 dark:border-slate-700'
-                }`}
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{currentModule?.completed ? 'Completed' : 'Mark as Completed'}</span>
-              </button>
             </div>
 
-            <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               {currentModule?.summary}
             </p>
 
-            {/* Study Resources & Downloads */}
+            {/* Study Resources */}
             <div className="pt-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-2 flex items-center gap-1.5">
                 <FolderDown className="w-3.5 h-3.5 text-moes-500" />
@@ -291,11 +454,20 @@ export const CoursePlayer = () => {
           
           <div className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-md space-y-4">
             <div>
-              <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                Course Syllabus & Modules
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                {course.modules?.filter(m => m.completed).length || 0} of {course.modules?.length || 0} modules completed
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  Course Syllabus & Modules
+                </h3>
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                  courseStatus === 'completed' || calculatedProgress === 100
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                }`}>
+                  {courseStatus === 'completed' || calculatedProgress === 100 ? 'Completed' : 'In Progress'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {completedLessonsCount} of {totalLessonsCount} lessons completed ({calculatedProgress}%)
               </p>
             </div>
 
@@ -303,63 +475,65 @@ export const CoursePlayer = () => {
             <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
               <div
                 className="h-full bg-emerald-500 transition-all duration-500"
-                style={{
-                  width: `${((course.modules?.filter(m => m.completed).length || 0) / (course.modules?.length || 1)) * 100}%`
-                }}
+                style={{ width: `${calculatedProgress}%` }}
               ></div>
             </div>
 
             {/* Module List */}
-            <div className="space-y-2 pt-2">
-              {course.modules?.map((mod, index) => {
-                const isSelected = activeModuleIndex === index;
-                return (
-                  <div
-                    key={mod.id}
-                    onClick={() => setActiveModuleIndex(index)}
-                    className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-3 text-xs ${
-                      isSelected
-                        ? 'border-moes-500 bg-moes-50/70 dark:bg-moes-950/40 text-slate-900 dark:text-white shadow-sm'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    <div className="pt-0.5">
-                      {mod.completed ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      ) : (
-                        <Circle className="w-4 h-4 text-slate-400 shrink-0" />
-                      )}
-                    </div>
-
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold">{mod.title}</span>
-                        <span className="text-[10px] text-slate-500">{mod.duration}</span>
+            {loadingLessons ? (
+              <div className="py-6 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-moes-600" />
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2">
+                {displayModules.map((mod, index) => {
+                  const isSelected = activeModuleIndex === index;
+                  return (
+                    <div
+                      key={mod.id || index}
+                      onClick={() => setActiveModuleIndex(index)}
+                      className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-3 text-xs ${
+                        isSelected
+                          ? 'border-moes-500 bg-moes-50/70 dark:bg-moes-950/40 text-slate-900 dark:text-white shadow-sm'
+                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <div className="pt-0.5">
+                        {mod.completed ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-slate-400 shrink-0" />
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
-                        {mod.summary}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
 
-            {/* Assessment CTA */}
-            {course.assessmentId && (
-              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 text-center space-y-2">
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Ready to test your competency and claim your official MoES Certificate?
-                </p>
-                <button
-                  onClick={() => openQuiz(course.assessmentId)}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition shadow-md flex items-center justify-center gap-2"
-                >
-                  <Award className="w-4 h-4" />
-                  <span>Attempt Final Assessment</span>
-                </button>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold line-clamp-1">{mod.title}</span>
+                          <span className="text-[10px] text-slate-500 shrink-0">{mod.duration}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                          {mod.summary}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
+
+            {/* Assessment CTA */}
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 text-center space-y-2">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Ready to test your competency and claim your official MoES Certificate?
+              </p>
+              <button
+                onClick={handleStartExam}
+                className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition shadow-md flex items-center justify-center gap-2"
+              >
+                <Award className="w-4 h-4" />
+                <span>Attempt Certification Assessment</span>
+              </button>
+            </div>
 
           </div>
 
@@ -370,12 +544,12 @@ export const CoursePlayer = () => {
             </h4>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-moes-600 text-white flex items-center justify-center font-bold text-sm">
-                {course.trainerName.split(' ')[1]?.[0] || 'T'}
+                {(course.trainerName || "MoES Faculty").split(' ')[1]?.[0] || 'T'}
               </div>
               <div>
-                <h5 className="font-bold text-xs text-slate-900 dark:text-white">{course.trainerName}</h5>
-                <p className="text-[10px] text-moes-600 dark:text-sky-400 font-semibold">{course.trainerRole}</p>
-                <p className="text-[10px] text-slate-500">{course.department}</p>
+                <h5 className="font-bold text-xs text-slate-900 dark:text-white">{course.trainerName || "MoES Faculty"}</h5>
+                <p className="text-[10px] text-moes-600 dark:text-sky-400 font-semibold">{course.trainerRole || "Senior Faculty"}</p>
+                <p className="text-[10px] text-slate-500">{course.department || "Ministry of Earth Sciences"}</p>
               </div>
             </div>
           </div>

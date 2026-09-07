@@ -24,15 +24,18 @@ import {
 export const Navbar = () => {
   const { 
     currentRole, 
-    currentUser, 
     currentView, 
     setCurrentView, 
+    currentUser, 
     setAuthModal, 
     darkMode, 
     setDarkMode, 
     language, 
     setLanguage, 
-    switchRole 
+    switchRole,
+    logoutUser,
+    isAuthenticated,
+    isDemoMode
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -195,13 +198,13 @@ export const Navbar = () => {
 
                     <button
                       onClick={() => {
-                        switchRole('guest');
+                        logoutUser();
                         setProfileDropdownOpen(false);
                       }}
                       className="w-full text-left px-4 py-2 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800"
                     >
                       <LogOut className="w-3.5 h-3.5" />
-                      <span>Log Out / Switch to Guest</span>
+                      <span>Log Out {isDemoMode ? '(Exit Demo)' : ''}</span>
                     </button>
                   </div>
                 )}

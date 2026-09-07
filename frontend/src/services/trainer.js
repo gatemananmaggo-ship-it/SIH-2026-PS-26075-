@@ -114,12 +114,25 @@ export const deleteSessionApi = (sessionId) => {
   return api.delete(`/trainer/sessions/${sessionId}`);
 };
 
-export const completeSessionApi = (sessionId) => {
-  return api.patch(`/trainer/sessions/${sessionId}/complete`, {});
+export const startSessionApi = (sessionId) => {
+  return api.patch(`/trainer/sessions/${sessionId}/start`, {});
+};
+
+export const completeSessionApi = (sessionId, recordingUrl) => {
+  return api.patch(`/trainer/sessions/${sessionId}/complete`, { recordingUrl });
+};
+
+export const updateSessionRecordingApi = (sessionId, recordingUrl) => {
+  return api.patch(`/trainer/sessions/${sessionId}/recording`, { recordingUrl });
 };
 
 export const publishSessionApi = (sessionId) => {
   return api.post(`/trainer/sessions/${sessionId}/publish`, {});
+};
+
+// Get a fresh JaaS JWT for an in-progress session the trainer owns (Reopen Classroom)
+export const trainerJoinSessionApi = (sessionId) => {
+  return api.get(`/trainer/sessions/${sessionId}/join`);
 };
 
 // ==============================

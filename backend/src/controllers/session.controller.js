@@ -1,6 +1,7 @@
-const Course = require('../models/course')
-const Enrollment = require('../models/enrollment')
-const TrainerSession = require('../models/trainersession')
+const crypto = require("crypto");
+const Course = require('../models/course');
+const Enrollment = require('../models/enrollment');
+const TrainerSession = require('../models/trainersession');
 const SessionEnrollment = require("../models/sessionEnrollment");
 
 const { isValidObjectId } = require("../utils/validation");
@@ -8,6 +9,7 @@ const {
     getPagination,
     getPaginationMeta
 } = require("../utils/pagination");
+const { generateJaasJwt, extractRoomName } = require("../utils/jaasJwt");
 
 // ==============================
 // TRAINER CONTROLLERS
@@ -17,16 +19,16 @@ const createSession = async (req,res)=>{
     try{
         const trainerId = req.user._id;
 
-        const{
+        const {
             courseId,
             title,
             description,
             date,
             startTime,
             endTime,
-            meetingLink
-
-        } = req.body
+            maxSeats,
+            maxCapacity
+        } = req.body;
 
         if (!isValidObjectId(courseId)) {
             return res.status(400).json({
@@ -66,45 +68,54 @@ const createSession = async (req,res)=>{
             });
         }
 
-        if (sessionDate < new Date()) {
+        const sessionDateTime = new Date(sessionDate);
+        sessionDateTime.setHours(start[0], start[1], 0, 0);
+
+        if (sessionDateTime < new Date()) {
             return res.status(400).json({
-                message: "Session date cannot be in the past"
+                message: "Session start time cannot be in the past"
             });
         }
 
-        // Verify course and trainee
+        // Verify course ownership
         const course = await Course.findOne({
-            _id:  courseId,
+            _id: courseId,
             trainerId
-        })
+        });
 
-        if(!course){
+        if (!course) {
             return res.status(404).json({
-                message:"Course not found or u are not the owner"
-            })
+                message: "Course not found or u are not the owner"
+            });
         }
+
+        // CRITICAL: Always generate a unique, stable JaaS room name on the backend.
+        // Client-supplied meeting URLs or room names are never accepted.
+        // Format: "capacity-connect-<12 random hex chars>" — used as the JaaS roomName.
+        const meetingRoom = `capacity-connect-${crypto.randomBytes(6).toString("hex")}`;
 
         const session = await TrainerSession.create({
             trainerId,
             courseId,
-            title,
-            description,
+            title: title ? title.trim() : "",
+            description: description ? description.trim() : "",
             date,
             startTime,
             endTime,
-            meetingLink
+            meetingRoom,  // JaaS room identifier (new field)
+            maxSeats: Number(maxSeats || maxCapacity) || 30
         });
 
         return res.status(201).json({
-            message:"Created successfully",
+            message: "Created successfully",
             session
-        })
-    }catch(err){
-        console.log("Error in creating Session",err);
+        });
+    } catch (err) {
+        console.log("Error in creating Session", err);
 
         return res.status(500).json({
-            message:'Server Error'
-        })
+            message: 'Server Error'
+        });
     }
 }
 
@@ -158,10 +169,19 @@ const getTrainerSessions = async (req, res) => {
             TrainerSession.countDocuments(filter)
         ]);
 
+        // Normalize meetingUrl as canonical property (with fallback to legacy meetingLink)
+        const normalizedSessions = sessions.map(session => {
+            const obj = session.toObject();
+            if (!obj.meetingUrl && obj.meetingLink) {
+                obj.meetingUrl = obj.meetingLink;
+            }
+            return obj;
+        });
+
         return res.status(200).json({
             message: "Sessions fetched successfully",
             totalSessions: total,
-            sessions,
+            sessions: normalizedSessions,
             ...getPaginationMeta(page, limit, total)
         });
 
@@ -210,18 +230,20 @@ const updateSession = async (req, res) => {
             date,
             startTime,
             endTime,
-            meetingLink,
+            maxSeats,
+            maxCapacity,
             status
         } = req.body;
 
-        // Validate status
-        if (
-            status !== undefined &&
-            !["scheduled", "completed", "cancelled"].includes(status)
-        ) {
-            return res.status(400).json({
-                message: "Invalid session status"
-            });
+        // If status is provided, reject arbitrary status transitions
+        if (status !== undefined && status !== session.status) {
+            if (status === "cancelled" && session.status === "scheduled") {
+                session.status = "cancelled";
+            } else {
+                return res.status(400).json({
+                    message: "Invalid session status transition. Session status is controlled via start and complete endpoints."
+                });
+            }
         }
 
         // Use updated values, or existing values if not changed
@@ -283,13 +305,17 @@ const updateSession = async (req, res) => {
         }
 
         // Apply updates
-        if (title !== undefined) session.title = title;
-        if (description !== undefined) session.description = description;
-        if (date !== undefined) session.date = date;
-        if (startTime !== undefined) session.startTime = startTime;
-        if (endTime !== undefined) session.endTime = endTime;
-        if (meetingLink !== undefined) session.meetingLink = meetingLink;
-        if (status !== undefined) session.status = status;
+        if (title !== undefined) session.title = title.trim();
+        if (description !== undefined) session.description = description.trim();
+        session.date = sessionDate;
+        session.startTime = updatedStartTime;
+        session.endTime = updatedEndTime;
+        if (maxSeats !== undefined || maxCapacity !== undefined) {
+            const parsedSeats = Number(maxSeats || maxCapacity);
+            if (!isNaN(parsedSeats) && parsedSeats >= 1) {
+                session.maxSeats = parsedSeats;
+            }
+        }
 
         await session.save();
 
@@ -354,9 +380,144 @@ const deleteSession = async (req, res) => {
     }
 };
 
-// Change status of session
-const completeSession = async (req,res)=>{
-    try{
+// Start session (Trainer triggers scheduled -> in_progress and retrieves Jitsi room)
+const startSession = async (req, res) => {
+    try {
+        const trainerId = req.user._id;
+        const sessionId = req.params.sessionId;
+
+        if (!isValidObjectId(sessionId)) {
+            return res.status(400).json({
+                message: "Invalid session ID"
+            });
+        }
+
+        const session = await TrainerSession.findOne({
+            _id: sessionId,
+            trainerId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                message: "Session not found"
+            });
+        }
+
+        // Strictly enforce: only scheduled -> in_progress transition
+        if (session.status === "in_progress") {
+            return res.status(400).json({
+                message: "Session is already in progress"
+            });
+        }
+
+        if (session.status === "completed") {
+            return res.status(400).json({
+                message: "Session is already completed"
+            });
+        }
+
+        if (session.status !== "scheduled") {
+            return res.status(400).json({
+                message: "Only scheduled sessions can be started"
+            });
+        }
+
+        // Validate session start time on backend (can be started up to 30 minutes before scheduled start)
+        if (!session.date || !session.startTime) {
+            return res.status(400).json({
+                message: "Session date and start time are required to start session"
+            });
+        }
+
+        try {
+            const sessionDate = new Date(session.date);
+            const timeParts = session.startTime.split(":");
+            if (timeParts.length !== 2) {
+                return res.status(400).json({
+                    message: "Invalid session start time format"
+                });
+            }
+            const hours = Number(timeParts[0]);
+            const minutes = Number(timeParts[1]);
+            if (isNaN(hours) || isNaN(minutes) || isNaN(sessionDate.getTime())) {
+                return res.status(400).json({
+                    message: "Cannot determine session start time"
+                });
+            }
+
+            sessionDate.setHours(hours, minutes, 0, 0);
+            const now = new Date();
+            const earliestAllowed = new Date(sessionDate.getTime() - 30 * 60 * 1000);
+            if (now < earliestAllowed) {
+                return res.status(400).json({
+                    message: `Session cannot be started yet. Scheduled for ${session.startTime} (available 30 minutes prior).`
+                });
+            }
+        } catch (timeErr) {
+            return res.status(400).json({
+                message: "Failed to validate session start time"
+            });
+        }
+
+        // Resolve the stable JaaS room name.
+        // Priority: meetingRoom (new) > extract from legacy meetingUrl > extract from meetingLink > generate fresh.
+        let roomName = session.meetingRoom || null;
+        if (!roomName) {
+            roomName = extractRoomName(session.meetingUrl || session.meetingLink || "");
+        }
+        if (!roomName) {
+            // Fallback: generate and persist a room name for very old sessions
+            roomName = `capacity-connect-${crypto.randomBytes(6).toString("hex")}`;
+        }
+
+        // CRITICAL SAFETY: Generate JaaS JWT BEFORE transitioning session status.
+        // If JWT generation fails (e.g. credentials not configured), the session
+        // must remain 'scheduled' — do NOT leave it stuck in 'in_progress'.
+        let jaas;
+        try {
+            jaas = generateJaasJwt(req.user, roomName, true);
+        } catch (jwtErr) {
+            // JaaS credentials are not configured on the server — return 503.
+            // Session status is NOT changed; trainer gets a clear actionable message.
+            console.error("[JaaS] JWT generation failed for startSession:", jwtErr.message);
+            return res.status(503).json({
+                message: "Live classroom is not available: JaaS credentials are not configured on the server. " +
+                         "Set JAAS_APP_ID, JAAS_KEY_ID, and JAAS_PRIVATE_KEY in the backend environment."
+            });
+        }
+
+        // Persist the resolved room name if not already stored
+        if (!session.meetingRoom) {
+            session.meetingRoom = roomName;
+        }
+
+        // Transition scheduled -> in_progress (only reached after successful JWT generation)
+        session.status = "in_progress";
+        await session.save();
+
+        return res.status(200).json({
+            message: "Session started successfully",
+            session,
+            jaas: {
+                appId: jaas.appId,
+                roomName: jaas.roomName,
+                jwt: jaas.jwt,
+                domain: jaas.domain
+            }
+        });
+
+    } catch (err) {
+        console.log("Error starting session:", err);
+
+        return res.status(500).json({
+            message: "Server Error"
+        });
+    }
+};
+
+// Change status of session (in_progress or scheduled -> completed)
+const completeSession = async (req, res) => {
+    try {
         const trainerId = req.user._id;
         const sessionId = req.params.sessionId;
 
@@ -378,23 +539,25 @@ const completeSession = async (req,res)=>{
                 message: "Session not found"
             });
         }
-        // Only scheduled sessions can be completed
-        if(session.status !== "scheduled"){
+        // Only in_progress sessions can be completed (lifecycle: scheduled -> in_progress -> completed)
+        if (session.status !== "in_progress") {
             return res.status(400).json({
-                message:"Only scheduled sessions can be completed"
+                message: session.status === "completed"
+                    ? "Session is already completed"
+                    : "Session must be started (in_progress) before it can be completed"
             });
         }
         
         // Only live session can be completed
-        if(session.sessionType !== "live"){
+        if (session.sessionType !== "live") {
             return res.status(400).json({
-                message:"Only live sessions can be completed"
+                message: "Only live sessions can be completed"
             });
         }
 
         // Recording Url
-        if(recordingUrl !== undefined){
-            session.recordingUrl = recordingUrl;
+        if (recordingUrl !== undefined) {
+            session.recordingUrl = recordingUrl.trim();
         }
         session.status = "completed";
 
@@ -404,14 +567,66 @@ const completeSession = async (req,res)=>{
             message: "Session completed successfully",
             session
         });
-    }catch(err){
-        console.log("Error in marking session complete",err);
+    } catch (err) {
+        console.log("Error in marking session complete", err);
 
         return res.status(500).json({
-            message:"Server Error"
-        })
+            message: "Server Error"
+        });
     }
-}
+};
+
+// Update session recording URL (post-session attachment & editing)
+const updateSessionRecording = async (req, res) => {
+    try {
+        const trainerId = req.user._id;
+        const sessionId = req.params.sessionId;
+
+        if (!isValidObjectId(sessionId)) {
+            return res.status(400).json({
+                message: "Invalid session ID"
+            });
+        }
+
+        const { recordingUrl } = req.body;
+        if (recordingUrl === undefined) {
+            return res.status(400).json({
+                message: "recordingUrl is required"
+            });
+        }
+
+        const session = await TrainerSession.findOne({
+            _id: sessionId,
+            trainerId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                message: "Session not found"
+            });
+        }
+
+        if (session.status !== "completed") {
+            return res.status(400).json({
+                message: "Recording URL can only be attached to completed sessions"
+            });
+        }
+
+        session.recordingUrl = typeof recordingUrl === "string" ? recordingUrl.trim() : "";
+        await session.save();
+
+        return res.status(200).json({
+            message: "Recording URL updated successfully",
+            session
+        });
+    } catch (err) {
+        console.log("Error updating session recording:", err);
+
+        return res.status(500).json({
+            message: "Server Error"
+        });
+    }
+};
 
 // Publish Session
 const publishSession = async (req, res) => {
@@ -453,11 +668,12 @@ const publishSession = async (req, res) => {
             });
         }
 
-        // Create the recorded course
+        // Create the recorded course linking back to the source session
         const course = await Course.create({
             title: session.title,
             description: session.description || "",
             trainerId: session.trainerId,
+            sourceSessionId: session._id,
 
             // Required Course fields
             category: "Live Session",
@@ -494,14 +710,14 @@ const publishSession = async (req, res) => {
 // TRAINEE CONTROLLERS
 // ==============================
 
-// Get session for trainee
-
+// Get session for trainee (shows scheduled, in_progress, and completed sessions with recordings)
 const getTraineeSession = async (req, res) => {
     try {
         const traineeId = req.user._id;
 
         const enrollments = await Enrollment.find({
-            traineeId
+            traineeId,
+            status: { $in: ["active", "completed"] }
         }).select("courseId");
 
         const courseIds = enrollments.map(
@@ -510,9 +726,10 @@ const getTraineeSession = async (req, res) => {
 
         const { page, limit, skip } = getPagination(req);
 
+        // Include scheduled, in_progress, and completed so trainees can join live and watch recordings
         const filter = {
             courseId: { $in: courseIds },
-            status: "scheduled"
+            status: { $in: ["scheduled", "in_progress", "completed"] }
         };
 
         const [sessions, total] = await Promise.all([
@@ -526,10 +743,50 @@ const getTraineeSession = async (req, res) => {
             TrainerSession.countDocuments(filter)
         ]);
 
+        // Find which of these sessions the current trainee is enrolled in
+        const sessionIds = sessions.map(s => s._id);
+        const traineeSessionEnrollments = await SessionEnrollment.find({
+            traineeId,
+            sessionId: { $in: sessionIds }
+        }).select("sessionId");
+
+        const enrolledSessionIdSet = new Set(
+            traineeSessionEnrollments.map(e => e.sessionId.toString())
+        );
+
+        // Strip meeting URL for non-enrolled trainees and add enrollment metadata
+        const safeSessions = sessions.map(session => {
+            const isEnrolled = enrolledSessionIdSet.has(session._id.toString());
+            const sessionObj = session.toObject();
+
+            // Canonical normalization for legacy documents:
+            if (!sessionObj.meetingUrl && sessionObj.meetingLink) {
+                sessionObj.meetingUrl = sessionObj.meetingLink;
+            }
+            delete sessionObj.meetingLink;
+
+            // CRITICAL SECURITY: A trainee who is NOT enrolled in the session must NOT
+            // obtain the room identifier. Note: meetingRoom alone is not sufficient to join
+            // (a backend-issued JWT is required), but we strip it anyway per defense-in-depth.
+            if (!isEnrolled) {
+                delete sessionObj.meetingUrl;
+                delete sessionObj.meetingRoom;
+            }
+
+            const availableSeats = Math.max(0, (session.maxSeats || 30) - (session.enrolledCount || 0));
+
+            return {
+                ...sessionObj,
+                isEnrolled,
+                availableSeats,
+                remainingSeats: availableSeats
+            };
+        });
+
         return res.status(200).json({
             message: "Trainee sessions fetched successfully",
             totalSessions: total,
-            sessions,
+            sessions: safeSessions,
             ...getPaginationMeta(page, limit, total)
         });
 
@@ -541,10 +798,10 @@ const getTraineeSession = async (req, res) => {
         });
     }
 };
+
 // Enroll in session
 const enrollTraineeInSession = async (req, res) => {
     try {
-
         const traineeId = req.user._id;
         const sessionId = req.params.sessionId;
 
@@ -568,9 +825,11 @@ const enrollTraineeInSession = async (req, res) => {
             });
         }
 
+        // Enrollment is allowed ONLY while the session is scheduled.
+        // Closed when in_progress, completed, or cancelled.
         if (session.status !== "scheduled") {
             return res.status(400).json({
-                message: "Session is not available for enrollment"
+                message: "Session enrollment is closed"
             });
         }
 
@@ -578,7 +837,7 @@ const enrollTraineeInSession = async (req, res) => {
         const enrollment = await Enrollment.findOne({
             traineeId,
             courseId: session.courseId,
-            status: "active"
+            status: { $in: ["active", "completed"] }
         });
 
         if (!enrollment) {
@@ -588,11 +847,10 @@ const enrollTraineeInSession = async (req, res) => {
         }
 
         // Prevent duplicate enrollment
-        const existingEnrollment =
-            await SessionEnrollment.findOne({
-                traineeId,
-                sessionId
-            });
+        const existingEnrollment = await SessionEnrollment.findOne({
+            traineeId,
+            sessionId
+        });
 
         if (existingEnrollment) {
             return res.status(400).json({
@@ -600,7 +858,7 @@ const enrollTraineeInSession = async (req, res) => {
             });
         }
 
-        // Atomically reserve a seat
+        // Atomically reserve a seat: validate maxSeats > current enrolledCount safely while scheduled
         const updatedSession = await TrainerSession.findOneAndUpdate(
             {
                 _id: sessionId,
@@ -620,6 +878,12 @@ const enrollTraineeInSession = async (req, res) => {
         );
 
         if (!updatedSession) {
+            const currentSession = await TrainerSession.findById(sessionId).select("status");
+            if (currentSession && currentSession.status !== "scheduled") {
+                return res.status(400).json({
+                    message: "Session enrollment is closed"
+                });
+            }
             return res.status(400).json({
                 message: "Session is full or unavailable"
             });
@@ -631,7 +895,6 @@ const enrollTraineeInSession = async (req, res) => {
                 traineeId,
                 sessionId
             });
-
         } catch (err) {
             // Roll back reserved seat if enrollment creation fails
             await TrainerSession.findByIdAndUpdate(
@@ -646,19 +909,20 @@ const enrollTraineeInSession = async (req, res) => {
             throw err;
         }
 
+        const remainingSeats = Math.max(0, updatedSession.maxSeats - updatedSession.enrolledCount);
+
         return res.status(201).json({
             message: "Successfully enrolled in session",
+            sessionId: updatedSession._id,
             enrolledCount: updatedSession.enrolledCount,
-            remainingSeats:
-                updatedSession.maxSeats - updatedSession.enrolledCount
+            availableSeats: remainingSeats,
+            remainingSeats,
+            isEnrolled: true,
+            meetingUrl: updatedSession.meetingUrl || updatedSession.meetingLink
         });
 
     } catch (err) {
-
-        console.log(
-            "Error enrolling trainee in session:",
-            err
-        );
+        console.log("Error enrolling trainee in session:", err);
 
         return res.status(500).json({
             message: "Server Error"
@@ -667,8 +931,8 @@ const enrollTraineeInSession = async (req, res) => {
 };
 
 // Cancel the session enrollment
-const cancelSessionEnrollment = async (req,res) =>{
-    try{
+const cancelSessionEnrollment = async (req, res) => {
+    try {
         const traineeId = req.user._id;
         const sessionId = req.params.sessionId;
 
@@ -679,9 +943,9 @@ const cancelSessionEnrollment = async (req,res) =>{
         }
 
         // check session exists 
-        const session = await TrainerSession.findById(sessionId)
+        const session = await TrainerSession.findById(sessionId);
 
-        if(!session){
+        if (!session) {
             return res.status(404).json({
                 message: "Session not found"
             });
@@ -705,33 +969,187 @@ const cancelSessionEnrollment = async (req,res) =>{
         });
 
         // Decrease count safely
+        let newEnrolledCount = session.enrolledCount;
         if (session.enrolledCount > 0) {
-            session.enrolledCount -= 1;
+            newEnrolledCount -= 1;
+            session.enrolledCount = newEnrolledCount;
             await session.save();
         }
 
+        const availableSeats = Math.max(0, session.maxSeats - newEnrolledCount);
+
         return res.status(200).json({
             message: "Session enrollment cancelled successfully",
-            enrolledCount: session.enrolledCount,
-            remainingSeats: session.maxSeats - session.enrolledCount
+            sessionId,
+            enrolledCount: newEnrolledCount,
+            availableSeats,
+            remainingSeats: availableSeats,
+            isEnrolled: false
         });
 
-
-
-    }catch (err) {
-
-        console.log(
-            "Error cancelling session enrollment:",
-            err
-        );
+    } catch (err) {
+        console.log("Error cancelling session enrollment:", err);
 
         return res.status(500).json({
             message: "Server Error"
         });
     }
-}
+};
 
-module.exports={
+// Authorize trainee joining a live session — returns a short-lived JaaS JWT
+const joinTraineeSession = async (req, res) => {
+    try {
+        const traineeId = req.user._id;
+        const sessionId = req.params.sessionId;
+
+        if (!isValidObjectId(sessionId)) {
+            return res.status(400).json({
+                message: "Invalid session ID"
+            });
+        }
+
+        const session = await TrainerSession.findById(sessionId);
+
+        if (!session) {
+            return res.status(404).json({
+                message: "Session not found"
+            });
+        }
+
+        if (session.status === "cancelled") {
+            return res.status(400).json({
+                message: "Session has been cancelled"
+            });
+        }
+
+        if (session.status !== "in_progress") {
+            return res.status(400).json({
+                message: "Session is not currently live. Join is only allowed while the session is in progress."
+            });
+        }
+
+        // Verify course enrollment
+        const courseEnrollment = await Enrollment.findOne({
+            traineeId,
+            courseId: session.courseId,
+            status: { $in: ["active", "completed"] }
+        });
+
+        if (!courseEnrollment) {
+            return res.status(403).json({
+                message: "You are not enrolled in the course for this session"
+            });
+        }
+
+        // CRITICAL: Backend access authorization verifies session enrollment
+        const sessionEnrollment = await SessionEnrollment.findOne({
+            traineeId,
+            sessionId
+        });
+
+        if (!sessionEnrollment) {
+            return res.status(403).json({
+                message: "Access denied. You must enroll in this session before joining."
+            });
+        }
+
+        // Resolve the stable JaaS room name for this session
+        const roomName =
+            session.meetingRoom ||
+            extractRoomName(session.meetingUrl || session.meetingLink || "");
+
+        if (!roomName) {
+            return res.status(404).json({
+                message: "Meeting room has not been generated for this session. Ask the trainer to start the session first."
+            });
+        }
+
+        // Generate short-lived JaaS JWT for the trainee (moderator = false)
+        let jaas;
+        try {
+            jaas = generateJaasJwt(req.user, roomName, false);
+        } catch (jwtErr) {
+            return res.status(503).json({
+                message: "Live classroom is not available. JaaS credentials are not configured on the server."
+            });
+        }
+
+        return res.status(200).json({
+            message: "Access granted",
+            jaas: {
+                appId: jaas.appId,
+                roomName: jaas.roomName,
+                jwt: jaas.jwt,
+                domain: jaas.domain
+            }
+        });
+
+    } catch (err) {
+        console.log("Error authorizing trainee session join:", err);
+
+        return res.status(500).json({
+            message: "Server Error"
+        });
+    }
+};
+
+// Trainer re-joins an already in_progress session they own (fresh JWT)
+const trainerJoinSession = async (req, res) => {
+    try {
+        const trainerId = req.user._id;
+        const sessionId = req.params.sessionId;
+
+        if (!isValidObjectId(sessionId)) {
+            return res.status(400).json({ message: "Invalid session ID" });
+        }
+
+        const session = await TrainerSession.findOne({ _id: sessionId, trainerId });
+
+        if (!session) {
+            return res.status(404).json({ message: "Session not found or you are not the owner" });
+        }
+
+        if (session.status !== "in_progress") {
+            return res.status(400).json({
+                message: "Session is not in progress. Start the session first."
+            });
+        }
+
+        const roomName =
+            session.meetingRoom ||
+            extractRoomName(session.meetingUrl || session.meetingLink || "");
+
+        if (!roomName) {
+            return res.status(404).json({ message: "Meeting room not found for this session" });
+        }
+
+        let jaas;
+        try {
+            jaas = generateJaasJwt(req.user, roomName, true);
+        } catch (jwtErr) {
+            return res.status(503).json({
+                message: "Live classroom is not available. JaaS credentials are not configured on the server."
+            });
+        }
+
+        return res.status(200).json({
+            message: "Access granted",
+            session,
+            jaas: {
+                appId: jaas.appId,
+                roomName: jaas.roomName,
+                jwt: jaas.jwt,
+                domain: jaas.domain
+            }
+        });
+
+    } catch (err) {
+        console.log("Error in trainer session join:", err);
+        return res.status(500).json({ message: "Server Error" });
+    }
+};
+
+module.exports = {
     createSession,
     getTrainerSessions,
     updateSession,
@@ -739,6 +1157,10 @@ module.exports={
     getTraineeSession,
     enrollTraineeInSession,
     cancelSessionEnrollment,
+    joinTraineeSession,
+    trainerJoinSession,
+    startSession,
     completeSession,
+    updateSessionRecording,
     publishSession
-}
+};

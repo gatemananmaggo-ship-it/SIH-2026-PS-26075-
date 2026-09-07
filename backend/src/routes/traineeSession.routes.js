@@ -3,7 +3,8 @@ const express = require("express");
 const {
     getTraineeSession,
     enrollTraineeInSession,
-    cancelSessionEnrollment
+    cancelSessionEnrollment,
+    joinTraineeSession
 } = require("../controllers/session.controller");
 
 const authMiddleware = require("../middlewares/auth.middleware");
@@ -16,6 +17,12 @@ traineeSessionRouter.get(
     authMiddleware,
     roleMiddleware("trainee"),
     getTraineeSession
+);
+traineeSessionRouter.get(
+    "/:sessionId/join",
+    authMiddleware,
+    roleMiddleware("trainee"),
+    joinTraineeSession
 );
 traineeSessionRouter.post(
     "/:sessionId/enroll",

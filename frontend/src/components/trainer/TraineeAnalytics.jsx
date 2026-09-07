@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   Users, 
@@ -14,39 +14,61 @@ import {
   Building,
   GraduationCap
 } from 'lucide-react';
+import { getTrainerAnalyticsApi, getMyCoursesApi } from '../../services/trainer';
 
 export const TraineeAnalytics = () => {
-  const { users, courses, showToast } = useApp();
+  const { users, courses: initialCourses, showToast, isDemoMode } = useApp();
   const [selectedCourseId, setSelectedCourseId] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [backendStats, setBackendStats] = useState(null);
+  const [realCourses, setRealCourses] = useState(initialCourses);
 
+  useEffect(() => {
+    if (!isDemoMode) {
+      getTrainerAnalyticsApi()
+        .then(res => {
+          if (res) setBackendStats(res);
+        })
+        .catch(err => console.log('Error fetching trainer analytics:', err));
+
+      getMyCoursesApi({ page: 1, limit: 50 })
+        .then(res => {
+          if (res && res.courses && res.courses.length > 0) {
+            setRealCourses(res.courses);
+          }
+        })
+        .catch(err => console.log('Error fetching trainer courses:', err));
+    }
+  }, [isDemoMode]);
+
+  const activeCourses = realCourses && realCourses.length > 0 ? realCourses : initialCourses;
   const trainees = users.filter(u => u.role === 'trainee');
 
   // Build trainee participation rows
   const participationData = trainees.flatMap(trainee => {
     const enrolledIds = trainee.enrolledCourses || [];
     return enrolledIds.map(crsId => {
-      const crs = courses.find(c => c.id === crsId);
+      const crs = activeCourses.find(c => (c.id === crsId || c._id === crsId));
       const cert = trainee.certificates?.find(c => c.courseId === crsId);
       const feedback = trainee.feedbacksSubmitted?.find(f => f.courseId === crsId);
       const isCompleted = trainee.completedCourses?.includes(crsId) || !!cert;
 
       return {
-        traineeId: trainee.id,
+        traineeId: trainee.id || trainee._id,
         name: trainee.name,
         avatar: trainee.avatar,
         email: trainee.email,
-        organization: trainee.organization,
-        location: trainee.location || 'HQ',
-        designation: trainee.designation,
+        organization: trainee.organization || 'IMD',
+        location: trainee.location || trainee.regionalCenter || 'HQ',
+        designation: trainee.designation || 'Meteorologist',
         courseId: crsId,
         courseTitle: crs?.title || crsId,
-        courseDomain: crs?.domain || 'General',
-        progressPercent: isCompleted ? 100 : 65,
-        score: cert?.score || (isCompleted ? 88 : 62),
+        courseDomain: crs?.category || crs?.domain || 'General',
+        progressPercent: isCompleted ? 100 : (trainee.courseProgress?.[crsId] || 0),
+        score: cert?.score ?? null,
         grade: cert?.grade || (isCompleted ? 'Pass' : 'In Progress'),
         status: isCompleted ? 'Completed' : 'In Progress',
-        certId: cert?.id || 'Pending',
+        certId: cert?.id || cert?._id || cert?.certificateNumber || 'Pending',
         feedbackRating: feedback?.rating || null
       };
     });
@@ -72,7 +94,7 @@ export const TraineeAnalytics = () => {
         `"${r.location}"`,
         `"${r.courseTitle}"`,
         r.progressPercent,
-        r.score,
+        r.score !== null ? r.score : "Pending",
         r.status,
         `"${r.certId}"`
       ].join(","))
@@ -88,10 +110,13 @@ export const TraineeAnalytics = () => {
     showToast("Gradebook exported to CSV successfully!", "success");
   };
 
-  const totalEnrollments = participationData.length;
-  const completedCount = participationData.filter(r => r.status === 'Completed').length;
-  const avgScore = Math.round(participationData.reduce((acc, r) => acc + r.score, 0) / (totalEnrollments || 1));
-  const passRate = Math.round((completedCount / (totalEnrollments || 1)) * 100);
+  const totalEnrollments = backendStats ? (backendStats.totalEnrollments ?? 0) : participationData.length;
+  const completedCount = backendStats ? (backendStats.completedEnrollments ?? 0) : participationData.filter(r => r.status === 'Completed').length;
+  const scoredRows = participationData.filter(r => r.score !== null && r.score !== undefined);
+  const avgScore = scoredRows.length > 0 
+    ? Math.round(scoredRows.reduce((acc, r) => acc + r.score, 0) / scoredRows.length)
+    : null;
+  const passRate = totalEnrollments > 0 ? Math.round((completedCount / totalEnrollments) * 100) : 0;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -104,7 +129,7 @@ export const TraineeAnalytics = () => {
             <Users className="w-4 h-4 text-sky-500" />
           </div>
           <p className="text-2xl font-black text-slate-900 dark:text-white">{trainees.length}</p>
-          <span className="text-[11px] text-slate-500">Across 6 IMD Regional Centres</span>
+          <span className="text-[11px] text-slate-500">Across IMD & MoES Centers</span>
         </div>
 
         <div className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-md">
@@ -121,8 +146,12 @@ export const TraineeAnalytics = () => {
             <span className="text-xs text-slate-500 font-bold uppercase">Average MCQ Score</span>
             <Award className="w-4 h-4 text-amber-500" />
           </div>
-          <p className="text-2xl font-black text-slate-900 dark:text-white">{avgScore}%</p>
-          <span className="text-[11px] text-slate-500">Pass Threshold: 70%</span>
+          <p className="text-2xl font-black text-slate-900 dark:text-white">
+            {avgScore !== null ? `${avgScore}%` : 'N/A'}
+          </p>
+          <span className="text-[11px] text-slate-500">
+            {scoredRows.length > 0 ? `${scoredRows.length} Assessed • Pass: 70%` : 'Pending Exam Attempts'}
+          </span>
         </div>
 
         <div className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-md">
@@ -163,14 +192,26 @@ export const TraineeAnalytics = () => {
             </div>
 
             {/* Course Filter */}
+            {/* <select
+              value={selectedCourseId}
+              onChange={(e) => setSelectedCourseId(e.target.value)}
+              className="px-3 py-1.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
+            >
+              <option value="All">All Courses</option>
+              {activeCourses.map(c => (
+                <option key={c.id || c._id} value={c.id || c._id}>{c.title}</option>
+              ))}
+            </select> */}
             <select
               value={selectedCourseId}
               onChange={(e) => setSelectedCourseId(e.target.value)}
               className="px-3 py-1.5 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
             >
               <option value="All">All Courses</option>
-              {courses.map(c => (
-                <option key={c.id} value={c.id}>{c.title}</option>
+              {activeCourses.map(c => (
+                <option key={c.id || c._id} value={c.id || c._id}>
+                  {c.title}
+                </option>
               ))}
             </select>
 
@@ -252,14 +293,18 @@ export const TraineeAnalytics = () => {
                     </td>
 
                     <td className="p-3">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`font-bold font-mono text-xs ${
-                          row.score >= 70 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'
-                        }`}>
-                          {row.score}%
-                        </span>
-                        <span className="text-[10px] text-slate-400">({row.grade})</span>
-                      </div>
+                      {row.score !== null && row.score !== undefined ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-bold font-mono text-xs ${
+                            row.score >= 70 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'
+                          }`}>
+                            {row.score}%
+                          </span>
+                          <span className="text-[10px] text-slate-400">({row.grade})</span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-[11px] italic">Pending Exam</span>
+                      )}
                     </td>
 
                     <td className="p-3">

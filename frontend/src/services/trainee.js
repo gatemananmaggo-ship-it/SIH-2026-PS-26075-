@@ -48,6 +48,10 @@ export const getCourseProgressApi = (courseId) => {
 // ==============================
 // QUIZZES
 // ==============================
+export const getTraineeCourseQuizzesApi = (courseId) => {
+  return api.get(`/trainee/courses/${courseId}/quizzes`);
+};
+
 export const getTraineeQuizApi = (courseId, quizId) => {
   return api.get(`/trainee/courses/${courseId}/quizzes/${quizId}`);
 };
@@ -59,6 +63,10 @@ export const submitQuizAttemptApi = (courseId, quizId, answers) => {
 // ==============================
 // CERTIFICATES
 // ==============================
+export const getMyCertificatesApi = () => {
+  return api.get("/trainee/certificates");
+};
+
 export const checkCertificateEligibilityApi = (courseId) => {
   return api.get(`/trainee/courses/${courseId}/certificate/eligibility`);
 };
@@ -102,4 +110,8 @@ export const enrollTraineeInSessionApi = (sessionId) => {
 
 export const cancelSessionEnrollmentApi = (sessionId) => {
   return api.delete(`/trainee/sessions/${sessionId}/enroll`);
+};
+
+export const joinTraineeSessionApi = (sessionId) => {
+  return api.get(`/trainee/sessions/${sessionId}/join`);
 };

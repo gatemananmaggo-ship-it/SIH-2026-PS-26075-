@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   BrainCircuit, 
@@ -13,14 +13,106 @@ import {
   Sliders,
   FileSpreadsheet,
   Zap,
-  ArrowRight
+  ArrowRight,
+  Plus,
+  Trash2,
+  BookOpen
 } from 'lucide-react';
+import { 
+  getCompetenciesApi, 
+  createCompetencyApi, 
+  deleteCompetencyApi,
+  mapCompetenciesToCourseApi 
+} from '../../services/admin';
+import { Pagination } from '../common/Pagination';
+import { LoadingSpinner } from '../common/LoadingSpinner';
 
 export const CompetencyMapping = () => {
-  const { taxonomies, trainerCandidates, showToast } = useApp();
+  const { taxonomies, trainerCandidates, courses, showToast, isDemoMode } = useApp();
   const [selectedDomain, setSelectedDomain] = useState(taxonomies[0]?.domain || 'Radar Meteorology');
   const [minExperience, setMinExperience] = useState(5);
   const [assignedTrainers, setAssignedTrainers] = useState({});
+
+  // Real backend competencies
+  const [backendCompetencies, setBackendCompetencies] = useState([]);
+  const [compPagination, setCompPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [loading, setLoading] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newCompName, setNewCompName] = useState('');
+  const [newCompCategory, setNewCompCategory] = useState('Radar Meteorology');
+  const [newCompDesc, setNewCompDesc] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isDemoMode) {
+      loadCompetencies(1);
+    }
+  }, [isDemoMode]);
+
+  const loadCompetencies = async (page = 1) => {
+    setLoading(true);
+    try {
+      const res = await getCompetenciesApi({ page, limit: 10 });
+      if (res) {
+        setBackendCompetencies(res.competencies || []);
+        setCompPagination({
+          page: res.page || page,
+          limit: res.limit || 10,
+          total: res.total || 0,
+          totalPages: res.totalPages || 1
+        });
+      }
+    } catch (err) {
+      console.log('Error fetching competencies:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateCompetency = async (e) => {
+    e.preventDefault();
+    if (!newCompName.trim() || !newCompCategory.trim()) return;
+
+    if (isDemoMode) {
+      showToast('Competency created (Demo Mode)', 'success');
+      setShowAddModal(false);
+      setNewCompName('');
+      setNewCompDesc('');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await createCompetencyApi({
+        name: newCompName.trim(),
+        category: newCompCategory.trim(),
+        description: newCompDesc.trim()
+      });
+      showToast('New competency created successfully in backend!', 'success');
+      setNewCompName('');
+      setNewCompDesc('');
+      setShowAddModal(false);
+      loadCompetencies(1);
+    } catch (err) {
+      showToast(err.message || 'Failed to create competency', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteCompetency = async (id) => {
+    if (isDemoMode) {
+      showToast('Competency deleted (Demo Mode)', 'info');
+      return;
+    }
+    try {
+      await deleteCompetencyApi(id);
+      showToast('Competency deleted successfully', 'success');
+      loadCompetencies(compPagination.page);
+    } catch (err) {
+      showToast(err.message || 'Failed to delete competency', 'error');
+    }
+  };
 
   const activeTaxonomy = taxonomies.find(t => t.domain === selectedDomain) || taxonomies[0];
 
@@ -71,13 +163,22 @@ export const CompetencyMapping = () => {
             </p>
           </div>
 
-          <button
-            onClick={handleExportMapping}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white shadow-sm transition"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-            <span>Export Mapping Matrix</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Competency</span>
+            </button>
+            <button
+              onClick={handleExportMapping}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white shadow-sm transition"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Export Mapping Matrix</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -262,6 +363,157 @@ export const CompetencyMapping = () => {
           })}
         </div>
       </div>
+
+      {/* Official MoES Competency Standards Registry */}
+      <div className="glass-card rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-md space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+              <Award className="w-4 h-4 text-emerald-500" />
+              <span>MoES Competency Registry ({backendCompetencies.length > 0 ? compPagination.total : taxonomies.length})</span>
+            </h3>
+            <p className="text-xs text-slate-500">
+              Formal competencies recognized across meteorological divisions and mapped to curriculum modules.
+            </p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="p-8 text-center"><LoadingSpinner text="Loading competency registry..." /></div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-700">
+                <tr>
+                  <th className="p-3">Competency Title</th>
+                  <th className="p-3">Domain / Category</th>
+                  <th className="p-3">Description</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {backendCompetencies.length > 0 ? (
+                  backendCompetencies.map(comp => (
+                    <tr key={comp._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                      <td className="p-3 font-bold text-slate-900 dark:text-white">{comp.name}</td>
+                      <td className="p-3">
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                          {comp.category}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-600 dark:text-slate-400 max-w-xs truncate">{comp.description || 'Core MoES standard'}</td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => handleDeleteCompetency(comp._id)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Delete Competency"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  taxonomies.map((tax, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                      <td className="p-3 font-bold text-slate-900 dark:text-white">{tax.domain} Competency Core</td>
+                      <td className="p-3">
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                          {tax.code}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-600 dark:text-slate-400">{tax.subSkills?.join(', ')}</td>
+                      <td className="p-3 text-right text-slate-400 font-mono text-[10px]">Standard</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!isDemoMode && compPagination.totalPages > 1 && (
+          <div className="pt-2">
+            <Pagination
+              page={compPagination.page}
+              totalPages={compPagination.totalPages}
+              total={compPagination.total}
+              limit={compPagination.limit}
+              onPageChange={loadCompetencies}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Add Competency Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4 text-emerald-500" />
+                <span>Create Institutional Competency</span>
+              </h3>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400">✕</button>
+            </div>
+
+            <form onSubmit={handleCreateCompetency} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Competency Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. S-Band Polarimetric Calibration"
+                  value={newCompName}
+                  onChange={(e) => setNewCompName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Domain / Category</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Radar Meteorology"
+                  value={newCompCategory}
+                  onChange={(e) => setNewCompCategory(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  placeholder="Specific learning outcome and performance metric..."
+                  value={newCompDesc}
+                  onChange={(e) => setNewCompDesc(e.target.value)}
+                  className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none text-xs"
+                ></textarea>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md disabled:opacity-50"
+                >
+                  {submitting ? 'Saving...' : 'Save Competency'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

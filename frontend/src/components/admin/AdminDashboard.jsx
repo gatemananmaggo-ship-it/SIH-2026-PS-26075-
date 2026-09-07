@@ -15,12 +15,26 @@ import { AnalyticsOverview } from './AnalyticsOverview';
 import { UserApprovalManagement } from './UserApprovalManagement';
 import { HomepagePublisher } from './HomepagePublisher';
 import { CompetencyMapping } from './CompetencyMapping';
+import { getDashboardStatsApi } from '../../services/admin';
 
 export const AdminDashboard = () => {
-  const { currentUser, users, courses, announcements } = useApp();
+  const { currentUser, users, courses, announcements, isDemoMode } = useApp();
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'approvals', 'publisher', 'competency'
+  const [backendStats, setBackendStats] = useState(null);
 
-  const pendingApprovalsCount = users.filter(u => u.status === 'pending').length;
+  React.useEffect(() => {
+    if (!isDemoMode) {
+      getDashboardStatsApi()
+        .then(res => {
+          if (res) setBackendStats(res);
+        })
+        .catch(err => console.log('Error fetching admin dashboard stats:', err));
+    }
+  }, [isDemoMode]);
+
+  const pendingApprovalsCount = backendStats ? (backendStats.pendingUsers ?? 0) : users.filter(u => u.status === 'pending').length;
+  const totalUsersCount = backendStats ? (backendStats.totalUsers ?? 0) : users.length;
+  const totalCoursesCount = backendStats ? (backendStats.totalCourses ?? 0) : courses.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fadeIn">
@@ -61,12 +75,12 @@ export const AdminDashboard = () => {
             <div className="w-px h-8 bg-white/20"></div>
             <div className="text-center">
               <span className="text-[10px] text-slate-300 uppercase tracking-wider block">Users</span>
-              <span className="text-lg font-black text-sky-300">{users.length}</span>
+              <span className="text-lg font-black text-sky-300">{totalUsersCount}</span>
             </div>
             <div className="w-px h-8 bg-white/20"></div>
             <div className="text-center">
-              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">Broadcasts</span>
-              <span className="text-lg font-black text-emerald-400">{announcements.length}</span>
+              <span className="text-[10px] text-slate-300 uppercase tracking-wider block">{backendStats ? 'Courses' : 'Broadcasts'}</span>
+              <span className="text-lg font-black text-emerald-400">{backendStats ? totalCoursesCount : announcements.length}</span>
             </div>
           </div>
         </div>

@@ -1,10 +1,39 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Award, QrCode, ShieldCheck, Printer, Download, Eye, Calendar, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Award, QrCode, ShieldCheck, Printer, Download, Eye, Calendar, Sparkles, CheckCircle2, Loader2 } from 'lucide-react';
+import { getMyCertificatesApi } from '../../services/trainee';
 
 export const TraineeCertificates = () => {
-  const { currentUser, setActiveCertificate, courses, setCurrentView, setActiveCourseId } = useApp();
-  const certificates = currentUser?.certificates || [];
+  const { currentUser, setActiveCertificate, courses, setCurrentView, setActiveCourseId, isDemoMode, isAuthenticated } = useApp();
+  const [certificates, setCertificates] = useState(currentUser?.certificates || []);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchCerts = async () => {
+      if (isDemoMode || !isAuthenticated) return;
+      try {
+        setLoading(true);
+        const res = await getMyCertificatesApi();
+        if (res && res.certificates) {
+          const mapped = res.certificates.map(c => ({
+            id: c.certificateNumber,
+            courseTitle: c.courseId?.title || "MoES Certified Program",
+            issueDate: new Date(c.createdAt || c.issueDate || Date.now()).toISOString().split('T')[0],
+            score: c.score || 85,
+            grade: (c.score || 85) >= 90 ? "Distinction" : (c.score || 85) >= 80 ? "First Class" : "Pass",
+            verificationHash: c.certificateNumber,
+            courseId: c.courseId?._id || c.courseId
+          }));
+          setCertificates(mapped);
+        }
+      } catch (err) {
+        console.log("Could not load certificates:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCerts();
+  }, [isDemoMode, isAuthenticated]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -35,7 +64,12 @@ export const TraineeCertificates = () => {
       </div>
 
       {/* Certificates Grid */}
-      {certificates.length === 0 ? (
+      {loading ? (
+        <div className="glass-card rounded-2xl p-12 text-center border border-slate-200 dark:border-slate-800 space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin text-moes-600 mx-auto" />
+          <p className="text-xs text-slate-500">Retrieving official digital certificates from registry...</p>
+        </div>
+      ) : certificates.length === 0 ? (
         <div className="glass-card rounded-2xl p-12 text-center border border-slate-200 dark:border-slate-800 space-y-4">
           <Award className="w-16 h-16 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-slate-700 dark:text-slate-300">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   User, 
@@ -16,14 +16,22 @@ import {
   ShieldCheck 
 } from 'lucide-react';
 
+import { 
+  getTraineeProfileApi, 
+  updateTraineeProfileApi 
+} from '../../services/trainee';
+
 export const TraineeProfile = () => {
-  const { currentUser, updateTraineeProfile, setActiveCertificate } = useApp();
+  const { currentUser, updateTraineeProfile, setActiveCertificate, showToast, isDemoMode, isAuthenticated } = useApp();
 
   const [name, setName] = useState(currentUser?.name || '');
   const [designation, setDesignation] = useState(currentUser?.designation || '');
   const [department, setDepartment] = useState(currentUser?.department || '');
   const [organization, setOrganization] = useState(currentUser?.organization || '');
   const [location, setLocation] = useState(currentUser?.location || '');
+
+  const [saving, setSaving] = useState(false);
+  const [hasServerProfile, setHasServerProfile] = useState(false);
 
   // Qualifications list
   const [qualifications, setQualifications] = useState(currentUser?.qualifications || []);
@@ -48,8 +56,84 @@ export const TraineeProfile = () => {
   const [newSkillLevel, setNewSkillLevel] = useState(80);
   const [newSkillCategory, setNewSkillCategory] = useState('Atmospheric');
 
-  const handleSaveProfile = (e) => {
-    e.preventDefault();
+  // Load from backend on mount
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (isDemoMode || !isAuthenticated) return;
+      try {
+        const res = await getTraineeProfileApi();
+        if (res && res.profile) {
+          setHasServerProfile(true);
+          const p = res.profile;
+          if (p.designation) setDesignation(p.designation);
+          if (p.department) setDepartment(p.department);
+          if (p.organization) setOrganization(p.organization);
+          if (p.regionalCenter) setLocation(p.regionalCenter);
+          if (p.userId?.name) setName(p.userId.name);
+          if (p.qualifications?.length) {
+            setQualifications(p.qualifications.map(q => ({
+              degree: q.degree || '',
+              institute: q.institution || q.institute || '',
+              year: q.year ? String(q.year) : '2024'
+            })));
+          }
+          if (p.workExperience?.length) {
+            setExperience(p.workExperience.map(w => ({
+              role: w.designation || w.role || '',
+              org: w.organization || w.org || '',
+              duration: w.startDate ? `${new Date(w.startDate).getFullYear()} - ${w.endDate ? new Date(w.endDate).getFullYear() : 'Present'}` : (w.duration || '2023 - Present'),
+              description: w.description || ''
+            })));
+          }
+          if (p.interests?.length) setInterests(p.interests);
+          if (p.skills?.length) {
+            setSkills(p.skills.map(s => typeof s === 'string' ? { name: s, level: 80, category: 'Core' } : s));
+          }
+        }
+      } catch (err) {
+        if (err.status === 404) {
+          setHasServerProfile(false);
+        }
+      }
+    };
+    fetchProfile();
+  }, [isDemoMode, isAuthenticated]);
+
+  const handleSaveProfile = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!isDemoMode && isAuthenticated) {
+      try {
+        setSaving(true);
+        const payload = {
+          qualifications: qualifications.map(q => ({
+            degree: q.degree || 'B.Tech / M.Sc',
+            institution: q.institute || q.institution || 'MoES Institute',
+            year: parseInt(q.year, 10) || new Date().getFullYear()
+          })),
+          workExperience: experience.map(exp => ({
+            organization: exp.org || exp.organization || 'MoES',
+            designation: exp.role || exp.designation || 'Scientific Officer',
+            description: exp.description || ''
+          })),
+          interests,
+          skills: skills.map(s => typeof s === 'string' ? s : s.name),
+          designation,
+          department,
+          organization,
+          regionalCenter: location,
+          certificates: []
+        };
+
+        await updateTraineeProfileApi(payload);
+        setHasServerProfile(true);
+        showToast("Profile synced to server successfully!", "success");
+      } catch (err) {
+        showToast(err.data?.message || "Saved locally", "info");
+      } finally {
+        setSaving(false);
+      }
+    }
+
     updateTraineeProfile({
       name,
       designation,

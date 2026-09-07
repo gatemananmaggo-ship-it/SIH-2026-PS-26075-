@@ -53,10 +53,10 @@ const courseSchema = new mongoose.Schema(
                 ref: "Competency"
             }
         ],
-        // sourceSessionId: {
-        //     type: mongoose.Schema.Types.ObjectId,
-        //     ref: "TrainerSession"
-        // }
+        sourceSessionId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "TrainerSession"
+        }
     },
     {
         timestamps: true

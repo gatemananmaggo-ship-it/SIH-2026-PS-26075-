@@ -46,9 +46,22 @@ const trainersessionSchema = new mongoose.Schema({
         trim: true,
     },
 
+    // Legacy: full https://meet.jit.si/... URL (kept for backward compat with existing documents)
+    meetingUrl: {
+        type: String,
+        trim: true,
+    },
+
+    // JaaS: stable room suffix used for 8x8.vc, e.g. "capacity-connect-abc123"
+    // New sessions store this instead of a full URL.
+    meetingRoom: {
+        type: String,
+        trim: true,
+    },
+
     status: {
         type: String,
-        enum: ["scheduled", "completed", "cancelled"],
+        enum: ["scheduled", "in_progress", "completed", "cancelled"],
         default: "scheduled"
     },
 

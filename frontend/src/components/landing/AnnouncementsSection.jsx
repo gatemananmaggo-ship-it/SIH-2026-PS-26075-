@@ -38,22 +38,31 @@ export const AnnouncementsSection = () => {
 
         {/* Announcements Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {announcements.map((item) => {
-            const isUrgent = item.urgent;
-            const isAchievement = item.category === 'Achievement';
+          {announcements.length === 0 ? (
+            <div className="glass-card rounded-2xl p-10 text-center border border-slate-200 dark:border-slate-800 col-span-full">
+              <Bell className="w-10 h-10 text-slate-400 mx-auto mb-3" />
+              <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">No Active Announcements</h3>
+              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                There are currently no circulars or broadcasts published by the Ministry of Earth Sciences Training Cell. Real-time updates will appear here automatically.
+              </p>
+            </div>
+          ) : (
+            announcements.map((item) => {
+              const isUrgent = item.urgent || item.isPinned;
+              const isAchievement = item.category === 'Achievement';
 
-            return (
-              <div
-                key={item.id}
-                onClick={() => setSelectedAnn(item)}
-                className={`glass-card p-6 rounded-2xl cursor-pointer hover:shadow-xl transition-all duration-300 border relative overflow-hidden group ${
-                  isUrgent
-                    ? 'border-red-300 dark:border-red-900/60 bg-red-50/30 dark:bg-red-950/20'
-                    : isAchievement
-                    ? 'border-amber-300 dark:border-amber-900/60 bg-amber-50/20 dark:bg-amber-950/20'
-                    : 'border-slate-200 dark:border-slate-800'
-                }`}
-              >
+              return (
+                <div
+                  key={item.id || item._id}
+                  onClick={() => setSelectedAnn(item)}
+                  className={`glass-card p-6 rounded-2xl cursor-pointer hover:shadow-xl transition-all duration-300 border relative overflow-hidden group ${
+                    isUrgent
+                      ? 'border-red-300 dark:border-red-900/60 bg-red-50/30 dark:bg-red-950/20'
+                      : isAchievement
+                      ? 'border-amber-300 dark:border-amber-900/60 bg-amber-50/20 dark:bg-amber-950/20'
+                      : 'border-slate-200 dark:border-slate-800'
+                  }`}
+                >
                 {/* Ribbon */}
                 {isUrgent && (
                   <div className="absolute top-0 right-0">
@@ -101,7 +110,7 @@ export const AnnouncementsSection = () => {
 
               </div>
             );
-          })}
+          }))}
         </div>
 
       </div>

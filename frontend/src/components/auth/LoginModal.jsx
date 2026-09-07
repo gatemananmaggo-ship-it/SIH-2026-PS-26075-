@@ -1,30 +1,46 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, LogIn, Lock, Mail, Shield, User, GraduationCap, UserCheck, AlertCircle, ArrowRight } from 'lucide-react';
+import { X, LogIn, Lock, Mail, Shield, GraduationCap, UserCheck, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
 export const LoginModal = () => {
-  const { authModal, setAuthModal, loginUser, switchRole } = useApp();
+  const { authModal, setAuthModal, loginUser, authLoading } = useApp();
   const [email, setEmail] = useState('ananya.sharma@imd.gov.in');
   const [role, setRole] = useState('trainee');
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   if (!authModal.isOpen || authModal.mode !== 'login') return null;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    loginUser(email, role);
+    setErrorMessage('');
+    if (!email || !password) {
+      setErrorMessage('Please provide both email and password.');
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await loginUser(email, password);
+    setSubmitting(false);
+
+    if (!result?.success && result?.error) {
+      setErrorMessage(result.error);
+    }
   };
 
   const handleQuickDemoFill = (selectedRole) => {
+    setRole(selectedRole);
+    setErrorMessage('');
     if (selectedRole === 'trainee') {
-      setEmail('ananya.sharma@imd.gov.in');
-      setRole('trainee');
+      setEmail('trainee email');
+      setPassword('');
     } else if (selectedRole === 'trainer') {
-      setEmail('rajesh.verma@imd.gov.in');
-      setRole('trainer');
+      setEmail('Trainer Email');
+      setPassword('');
     } else if (selectedRole === 'admin') {
-      setEmail('arvind.saxena@moes.gov.in');
-      setRole('admin');
+      setEmail('');
+      setPassword('');
     }
   };
 
@@ -47,14 +63,14 @@ export const LoginModal = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-amber-400">MoES Portal Authentication</span>
           </div>
           <h2 className="text-xl font-bold">Sign In to CAPACITY CONNECT</h2>
-          <p className="text-xs text-sky-200 mt-1">Select your organizational role to access portal tools</p>
+          <p className="text-xs text-sky-200 mt-1">Real session authentication backed by MongoDB</p>
         </div>
 
-        {/* Quick Demo Credentials Bar */}
+        {/* Quick Demo Credentials Bar for Evaluators */}
         <div className="bg-slate-100 dark:bg-slate-800/80 px-6 py-3 border-b border-slate-200 dark:border-slate-700">
           <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center gap-1">
             <Shield className="w-3.5 h-3.5 text-moes-500" />
-            <span>Quick Autofill for SIH Evaluators:</span>
+            <span>Evaluator Quick Autofill:</span>
           </p>
           <div className="grid grid-cols-3 gap-1.5">
             <button
@@ -93,68 +109,16 @@ export const LoginModal = () => {
           </div>
         </div>
 
+        {/* Error Message Display */}
+        {errorMessage && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 flex items-start gap-2 text-xs text-red-700 dark:text-red-300 animate-fadeIn">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          
-          {/* Role Selection */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Select Role
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              <label className={`flex flex-col items-center p-2.5 rounded-xl border text-center cursor-pointer transition ${
-                role === 'trainee' 
-                  ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 font-bold' 
-                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-              }`}>
-                <input 
-                  type="radio" 
-                  name="role" 
-                  value="trainee" 
-                  checked={role === 'trainee'} 
-                  onChange={() => setRole('trainee')}
-                  className="sr-only" 
-                />
-                <GraduationCap className="w-5 h-5 mb-1 text-blue-500" />
-                <span className="text-xs">Trainee</span>
-              </label>
-
-              <label className={`flex flex-col items-center p-2.5 rounded-xl border text-center cursor-pointer transition ${
-                role === 'trainer' 
-                  ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold' 
-                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-              }`}>
-                <input 
-                  type="radio" 
-                  name="role" 
-                  value="trainer" 
-                  checked={role === 'trainer'} 
-                  onChange={() => setRole('trainer')}
-                  className="sr-only" 
-                />
-                <UserCheck className="w-5 h-5 mb-1 text-indigo-500" />
-                <span className="text-xs">Trainer</span>
-              </label>
-
-              <label className={`flex flex-col items-center p-2.5 rounded-xl border text-center cursor-pointer transition ${
-                role === 'admin' 
-                  ? 'border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 font-bold' 
-                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-              }`}>
-                <input 
-                  type="radio" 
-                  name="role" 
-                  value="admin" 
-                  checked={role === 'admin'} 
-                  onChange={() => setRole('admin')}
-                  className="sr-only" 
-                />
-                <Shield className="w-5 h-5 mb-1 text-emerald-500" />
-                <span className="text-xs">Admin</span>
-              </label>
-            </div>
-          </div>
-
           {/* Email */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -182,9 +146,10 @@ export const LoginModal = () => {
               <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
               <input
                 type="password"
-                defaultValue="••••••••••••"
+                value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                placeholder="Enter your account password"
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-moes-500 outline-none"
               />
             </div>
@@ -193,10 +158,20 @@ export const LoginModal = () => {
           {/* Submit Button */}
           <button
             type="submit"
-            className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-md transition flex items-center justify-center gap-2"
+            disabled={submitting || authLoading}
+            className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span>Authenticate & Access Portal</span>
-            <ArrowRight className="w-4 h-4" />
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Authenticating with Server...</span>
+              </>
+            ) : (
+              <>
+                <span>Authenticate & Access Portal</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
           </button>
 
           {/* Switch to Signup */}
@@ -204,13 +179,15 @@ export const LoginModal = () => {
             <span>New trainee or trainer? </span>
             <button
               type="button"
-              onClick={() => setAuthModal({ isOpen: true, mode: 'signup' })}
+              onClick={() => {
+                setErrorMessage('');
+                setAuthModal({ isOpen: true, mode: 'signup' });
+              }}
               className="text-moes-600 dark:text-sky-400 font-bold hover:underline"
             >
               Create Account (Subject to Approval)
             </button>
           </div>
-
         </form>
       </div>
     </div>

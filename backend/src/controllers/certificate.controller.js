@@ -207,7 +207,7 @@ const generateCertificate = async (req,res)=>{
     }
 }
 
-// Get certificate
+// Get single course certificate
 const getCertificate = async (req,res)=>{
     try{
         const traineeId = req.user._id;
@@ -244,6 +244,31 @@ const getCertificate = async (req,res)=>{
         }); 
     }
 }
+
+// Get all certificates belonging to logged-in trainee
+const getMyCertificates = async (req, res) => {
+    try {
+        const traineeId = req.user._id;
+
+        const certificates = await Certificate.find({
+            traineeId
+        })
+        .populate("courseId", "title category level duration thumbnail")
+        .sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            message: "Certificates fetched successfully",
+            totalCertificates: certificates.length,
+            certificates
+        });
+    } catch (err) {
+        console.log("Error getting trainee certificates:", err);
+
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
+};
 
 const verifyCertificate = async (req, res) => {
     try {
@@ -392,11 +417,12 @@ const getCourseCertificates = async(req,res)=>{
 };
 
 
-module.exports ={
+module.exports = {
     checkCertificateEligibility,
     generateCertificate,
     getCertificate,
+    getMyCertificates,
     verifyCertificate,
     getAllCertificates,
     getCourseCertificates
-}
+};

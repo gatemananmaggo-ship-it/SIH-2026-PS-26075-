@@ -29,12 +29,22 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
   ];
 
   const filteredCourses = courses.filter(course => {
-    const matchesDomain = selectedDomain === 'All' || course.domain === selectedDomain;
+    const courseDomain = course.category || course.domain || 'General';
+    const courseTitle = course.title || '';
+    const courseDesc = course.description || '';
+    const courseTrainer = course.trainerId?.name || course.trainerName || 'MoES Faculty';
+
+    const matchesDomain = 
+      selectedDomain === 'All' || 
+      courseDomain.toLowerCase() === selectedDomain.toLowerCase() ||
+      (course.domain && course.domain === selectedDomain);
+
     const matchesSearch = 
-      course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.domain.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.trainerName.toLowerCase().includes(searchQuery.toLowerCase());
+      courseTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      courseDomain.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      courseDesc.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      courseTrainer.toLowerCase().includes(searchQuery.toLowerCase());
+
     return matchesDomain && matchesSearch;
   });
 
@@ -76,26 +86,42 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
 
       {/* Courses Grid */}
       {filteredCourses.length === 0 ? (
-        <div className="text-center py-16 glass-card rounded-2xl">
+        <div className="text-center py-16 glass-card rounded-2xl border border-slate-200 dark:border-slate-800">
           <BookOpen className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">No courses match your filter</h3>
-          <p className="text-xs text-slate-500 mt-1">Try resetting the domain category or clearing your search term.</p>
+          <h3 className="text-base font-bold text-slate-700 dark:text-slate-200">
+            {courses.length === 0 ? 'No Published Courses in Database' : 'No courses match your filter'}
+          </h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+            {courses.length === 0
+              ? 'Instructors can build and publish courses through the MoES Trainer Studio. Authenticate or enroll to view live curricula.'
+              : 'Try resetting the domain category or clearing your search term.'}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCourses.map(course => {
-            const isEnrolled = currentUser?.enrolledCourses?.includes(course.id);
-            const isCompleted = currentUser?.completedCourses?.includes(course.id);
+            const courseId = course._id || course.id;
+            const trainerName = course.trainerId?.name || course.trainerName || 'MoES Faculty';
+            const courseDomain = course.category || course.domain || 'General';
+            const courseLevel = course.level ? (course.level.charAt(0).toUpperCase() + course.level.slice(1)) : 'Intermediate';
+            const courseDuration = typeof course.duration === 'number' ? `${course.duration} Hours` : (course.duration || 'Self-Paced');
+            const courseThumbnail = course.thumbnail || 'https://images.unsplash.com/photo-1590055531615-f16d36ffe8ec?w=600&auto=format&fit=crop&q=80';
+            const courseRating = course.rating || 4.8;
+            const totalRatings = course.totalRatings || 24;
+            const moduleCount = course.lessons?.length || course.modules?.length || 4;
+
+            const isEnrolled = currentUser?.enrolledCourses?.some(c => (c._id || c) === courseId || (typeof c === 'string' && c === courseId));
+            const isCompleted = currentUser?.completedCourses?.some(c => (c._id || c) === courseId || (typeof c === 'string' && c === courseId));
 
             return (
               <div
-                key={course.id}
+                key={courseId}
                 className="group glass-card rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 flex flex-col justify-between border border-slate-200 dark:border-slate-800"
               >
                 {/* Thumbnail & Badges */}
                 <div className="relative aspect-video overflow-hidden bg-slate-900">
                   <img
-                    src={course.thumbnail}
+                    src={courseThumbnail}
                     alt={course.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100"
                   />
@@ -104,14 +130,14 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                   {/* Domain Tag */}
                   <div className="absolute top-3 left-3">
                     <span className="bg-moes-900/90 text-sky-300 backdrop-blur-md text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg border border-moes-500/40">
-                      {course.domain}
+                      {courseDomain}
                     </span>
                   </div>
 
                   {/* Level Tag */}
                   <div className="absolute top-3 right-3">
                     <span className="bg-slate-900/80 text-amber-300 backdrop-blur-md text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
-                      {course.level}
+                      {courseLevel}
                     </span>
                   </div>
 
@@ -119,11 +145,11 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                   <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-[11px] text-white">
                     <span className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded">
                       <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                      <strong>{course.rating}</strong> ({course.totalRatings || 24})
+                      <strong>{courseRating}</strong> ({totalRatings})
                     </span>
                     <span className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded">
                       <Clock className="w-3 h-3 text-sky-300" />
-                      <span>{course.duration}</span>
+                      <span>{courseDuration}</span>
                     </span>
                   </div>
                 </div>
@@ -143,14 +169,14 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-full bg-moes-100 dark:bg-moes-900 flex items-center justify-center font-bold text-[10px] text-moes-700 dark:text-sky-300">
-                        {course.trainerName.split(' ')[1]?.[0] || 'T'}
+                        {trainerName.split(' ')[1]?.[0] || trainerName[0] || 'T'}
                       </div>
-                      <span className="truncate max-w-[130px] font-medium">{course.trainerName}</span>
+                      <span className="truncate max-w-[130px] font-medium">{trainerName}</span>
                     </div>
 
                     <span className="flex items-center gap-1 font-medium text-slate-500">
                       <FileText className="w-3.5 h-3.5" />
-                      <span>{course.modules?.length || 4} Modules</span>
+                      <span>{moduleCount} Modules</span>
                     </span>
                   </div>
 
@@ -158,7 +184,7 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                   <div className="pt-2">
                     {isCompleted ? (
                       <button
-                        onClick={() => openCoursePlayer(course.id)}
+                        onClick={() => openCoursePlayer(courseId)}
                         className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center justify-center gap-1.5 shadow-sm"
                       >
                         <CheckCircle2 className="w-4 h-4 text-emerald-200" />
@@ -166,7 +192,7 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                       </button>
                     ) : isEnrolled ? (
                       <button
-                        onClick={() => openCoursePlayer(course.id)}
+                        onClick={() => openCoursePlayer(courseId)}
                         className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white transition flex items-center justify-center gap-1.5 shadow-sm"
                       >
                         <PlayCircle className="w-4 h-4 text-sky-200" />
@@ -174,7 +200,7 @@ export const DomainCatalogue = ({ searchQuery = '' }) => {
                       </button>
                     ) : (
                       <button
-                        onClick={() => enrollCourse(course.id)}
+                        onClick={() => enrollCourse(courseId)}
                         className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-slate-900 hover:bg-moes-700 dark:bg-slate-800 dark:hover:bg-moes-600 text-white transition flex items-center justify-center gap-1.5 shadow-sm border border-slate-700"
                       >
                         <span>Enroll & Access Modules</span>

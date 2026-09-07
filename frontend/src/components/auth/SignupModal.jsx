@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, UserPlus, Shield, GraduationCap, UserCheck, CheckCircle2, AlertTriangle, Building, Briefcase, Mail, User } from 'lucide-react';
+import { X, UserPlus, Shield, GraduationCap, UserCheck, AlertTriangle, Lock, Mail, User, Loader2 } from 'lucide-react';
 
 export const SignupModal = () => {
-  const { authModal, setAuthModal, registerUser } = useApp();
+  const { authModal, setAuthModal, registerUser, authLoading } = useApp();
 
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    password: '',
+    confirmPassword: '',
     role: 'trainee',
     organization: 'India Meteorological Department (IMD)',
     department: 'Radar & Nowcasting Division',
@@ -18,23 +20,46 @@ export const SignupModal = () => {
     interests: 'Nowcasting, Severe Storms'
   });
 
+  const [errorMessage, setErrorMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
   if (!authModal.isOpen || authModal.mode !== 'signup') return null;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    registerUser({
+    setErrorMessage('');
+
+    if (!formData.name || !formData.email || !formData.password) {
+      setErrorMessage('Name, official email, and password are required.');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      setErrorMessage('Passwords do not match.');
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await registerUser({
       name: formData.name,
       email: formData.email,
+      password: formData.password,
       role: formData.role,
       organization: formData.organization,
       department: formData.department,
       designation: formData.designation,
-      location: formData.location,
-      qualifications: [{ degree: formData.degree, institute: "MoES Institute / University", year: "2024" }],
-      skills: [{ name: formData.primarySkill, level: 75, category: "Core" }],
-      interests: formData.interests.split(',').map(s => s.trim())
+      location: formData.location
     });
+    setSubmitting(false);
+
+    if (!result?.success && result?.error) {
+      setErrorMessage(result.error);
+    }
   };
 
   return (
@@ -55,7 +80,7 @@ export const SignupModal = () => {
           </div>
           <h2 className="text-xl font-bold">Register on CAPACITY CONNECT</h2>
           <p className="text-xs text-sky-200 mt-1">
-            Submit your capacity profile. New registrations undergo Admin verification.
+            Official registration for trainees and trainers. Requires Admin approval.
           </p>
         </div>
 
@@ -63,12 +88,19 @@ export const SignupModal = () => {
         <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 px-6 py-2.5 flex items-start gap-2 text-[11px] text-amber-900 dark:text-amber-300">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <span>
-            <strong>Admin Approval Required:</strong> As per MoES security policies, new Trainee and Trainer accounts require validation by the Training Cell Administrator before full enrollment.
+            <strong>Admin Approval Required:</strong> As per MoES security policies, new Trainee and Trainer accounts require validation by the Training Cell Administrator before full access is granted.
           </span>
         </div>
 
+        {/* Error Alert */}
+        {errorMessage && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs text-red-700 dark:text-red-300 animate-fadeIn">
+            {errorMessage}
+          </div>
+        )}
+
         {/* Signup Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[72vh] overflow-y-auto">
           
           {/* Role Choice */}
           <div>
@@ -91,7 +123,7 @@ export const SignupModal = () => {
                 />
                 <GraduationCap className="w-5 h-5 text-blue-500 shrink-0" />
                 <div>
-                  <p className="text-xs">Trainee / Scientist</p>
+                  <p className="text-xs">Trainee / Officer</p>
                   <p className="text-[10px] font-normal text-slate-500">Access courses, take MCQs, earn certs</p>
                 </div>
               </label>
@@ -122,7 +154,7 @@ export const SignupModal = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Full Name (with Honorific)
+                Full Name *
               </label>
               <div className="relative">
                 <User className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -139,7 +171,7 @@ export const SignupModal = () => {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Official Email
+                Official Email *
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -149,6 +181,43 @@ export const SignupModal = () => {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   placeholder="name@imd.gov.in"
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Password & Confirm Password */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Password *
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="At least 6 characters"
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Confirm Password *
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  value={formData.confirmPassword}
+                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                  placeholder="Re-enter password"
                   className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
                 />
               </div>
@@ -181,82 +250,49 @@ export const SignupModal = () => {
               </label>
               <input
                 type="text"
-                required
                 value={formData.designation}
                 onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
-                placeholder="e.g. Scientist 'C' / Meteorologist"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
-              >
-              </input>
-            </div>
-          </div>
-
-          {/* Qualifications & Skills */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Highest Qualification
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.degree}
-                onChange={(e) => setFormData({ ...formData, degree: e.target.value })}
-                placeholder="e.g. Ph.D. in Meteorology"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Primary Expertise / Skill
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.primarySkill}
-                onChange={(e) => setFormData({ ...formData, primarySkill: e.target.value })}
-                placeholder="e.g. Radar Polarimetry, NWP"
+                placeholder="e.g. Scientist 'C'"
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
               />
             </div>
           </div>
 
-          {/* Interests */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Key Technical Interests (comma separated)
-            </label>
-            <input
-              type="text"
-              value={formData.interests}
-              onChange={(e) => setFormData({ ...formData, interests: e.target.value })}
-              placeholder="e.g. Cyclone Tracking, Doppler Radar, AI Weather Models"
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-moes-500"
-            />
-          </div>
-
-          {/* Submit Button */}
-          <button
-            type="submit"
-            className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-md transition flex items-center justify-center gap-2"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Submit Registration for Admin Approval</span>
-          </button>
-
-          {/* Switch to Login */}
-          <div className="text-center pt-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
-            <span>Already have an approved account? </span>
+          {/* Submit */}
+          <div className="pt-2">
             <button
-              type="button"
-              onClick={() => setAuthModal({ isOpen: true, mode: 'login' })}
-              className="text-moes-600 dark:text-sky-400 font-bold hover:underline"
+              type="submit"
+              disabled={submitting || authLoading}
+              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-gradient-to-r from-moes-600 to-moes-700 hover:from-moes-700 hover:to-moes-800 text-white shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Sign In
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Registering Account...</span>
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-4 h-4" />
+                  <span>Submit Registration for Approval</span>
+                </>
+              )}
             </button>
           </div>
 
+          {/* Switch to Login */}
+          <div className="text-center pt-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+            <span>Already registered? </span>
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMessage('');
+                setAuthModal({ isOpen: true, mode: 'login' });
+              }}
+              className="text-moes-600 dark:text-sky-400 font-bold hover:underline"
+            >
+              Sign In Here
+            </button>
+          </div>
         </form>
       </div>
     </div>

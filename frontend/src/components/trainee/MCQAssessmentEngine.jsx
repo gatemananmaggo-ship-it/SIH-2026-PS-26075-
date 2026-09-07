@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   Clock, 
@@ -14,29 +14,77 @@ import {
   RotateCcw,
   Sparkles,
   Printer,
-  MessageSquare
+  MessageSquare,
+  Loader2
 } from 'lucide-react';
+
+import { getTraineeQuizApi, submitQuizAttemptApi, generateCertificateApi } from '../../services/trainee';
 
 export const MCQAssessmentEngine = () => {
   const { 
     assessments, 
     activeAssessmentId, 
+    activeCourseId,
     setCurrentView, 
     submitQuizAnswers, 
     setActiveFeedbackCourse,
     courses,
-    showToast
+    showToast,
+    isDemoMode,
+    isAuthenticated,
+    setActiveCertificate
   } = useApp();
 
-  const assessment = assessments.find(a => a.id === activeAssessmentId) || assessments[0];
-  const course = courses.find(c => c.id === assessment?.courseId);
+  const assessment = assessments.find(
+    a => a.id === activeAssessmentId || a._id === activeAssessmentId
+  );
+  const targetAssessment = assessment || (assessments.length > 0 ? assessments[0] : null);
+  const course = courses.find(
+    c => (c.id === (activeCourseId || targetAssessment?.courseId) || c._id === (activeCourseId || targetAssessment?.courseId))
+  );
+
+  const [liveQuiz, setLiveQuiz] = useState(null);
+  const [loadingQuiz, setLoadingQuiz] = useState(false);
+  const [quizError, setQuizError] = useState(null);
+  const [submittingQuiz, setSubmittingQuiz] = useState(false);
 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState({}); // { qIndex: selectedOptionIndex }
-  const [flaggedQuestions, setFlaggedQuestions] = useState({}); // { qIndex: true/false }
-  const [timeLeft, setTimeLeft] = useState((assessment?.durationMinutes || 15) * 60);
+  const [flaggedQuestions, setFlaggedQuestions] = useState({});
+  const [timeLeft, setTimeLeft] = useState(15 * 60);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [scoreReport, setScoreReport] = useState(null);
+  const [generatingCert, setGeneratingCert] = useState(false);
+
+  // Load Quiz from Backend
+  const loadQuizData = useCallback(async () => {
+    const cid = activeCourseId || assessment?.courseId || course?._id || course?.id;
+    const qid = activeAssessmentId || assessment?._id || assessment?.id;
+
+    if (!cid || !qid || isDemoMode || !isAuthenticated) return;
+
+    try {
+      setLoadingQuiz(true);
+      setQuizError(null);
+      const res = await getTraineeQuizApi(cid, qid);
+      if (res && res.quiz) {
+        setLiveQuiz(res.quiz);
+      }
+    } catch (err) {
+      console.log('Could not load backend quiz:', err);
+      setQuizError(err?.data?.message || err?.message || 'Assessment not found on server');
+    } finally {
+      setLoadingQuiz(false);
+    }
+  }, [activeCourseId, activeAssessmentId, course, assessment, isDemoMode, isAuthenticated]);
+
+  useEffect(() => {
+    loadQuizData();
+  }, [loadQuizData]);
+
+  // Questions to render (Backend or Local fallback)
+  const activeQuiz = liveQuiz || assessment;
+  const questions = activeQuiz?.questions || [];
 
   // Timer countdown
   useEffect(() => {
@@ -56,7 +104,6 @@ export const MCQAssessmentEngine = () => {
     return () => clearInterval(timer);
   }, [isSubmitted]);
 
-  const questions = assessment?.questions || [];
   const currentQ = questions[currentQuestionIndex];
 
   const handleSelectOption = (optIndex) => {
@@ -74,25 +121,112 @@ export const MCQAssessmentEngine = () => {
     });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    const cid = activeCourseId || assessment?.courseId || course?._id || course?.id;
+    const qid = activeAssessmentId || assessment?._id || assessment?.id;
+
+    if (!isDemoMode && isAuthenticated && cid && qid && liveQuiz) {
+      try {
+        setSubmittingQuiz(true);
+        const answersPayload = Object.entries(selectedAnswers).map(([qIdx, optIdx]) => {
+          const q = questions[Number(qIdx)];
+          return {
+            questionId: q?._id || q?.id,
+            answer: q?.options?.[optIdx]
+          };
+        }).filter(a => a.questionId && a.answer !== undefined);
+
+        const res = await submitQuizAttemptApi(cid, qid, answersPayload);
+        if (res && res.Result) {
+          const r = res.Result;
+          setScoreReport({
+            totalQuestions: questions.length,
+            correctCount: Math.round((r.percentage / 100) * questions.length),
+            percentage: r.percentage,
+            passed: r.passed,
+            passingScore: r.passingMarks || 70,
+            obtainedMarks: r.obtainedMarks,
+            totalMarks: r.totalMarks
+          });
+          setIsSubmitted(true);
+          showToast(r.passed ? "Congratulations! Assessment passed." : "Assessment completed.", r.passed ? "success" : "info");
+          return;
+        }
+      } catch (err) {
+        showToast(err.data?.message || "Failed to submit attempt online. Evaluating locally...", "warning");
+      } finally {
+        setSubmittingQuiz(false);
+      }
+    }
+
+    // Local / Demo Evaluation Fallback
     let correctCount = 0;
     questions.forEach((q, idx) => {
-      if (selectedAnswers[idx] === q.correctIndex) {
+      if (q && selectedAnswers[idx] === q.correctIndex) {
         correctCount++;
       }
     });
 
-    const percentage = Math.round((correctCount / questions.length) * 100);
-    const passed = submitQuizAnswers(assessment.id, percentage, selectedAnswers);
+    const percentage = questions.length > 0 ? Math.round((correctCount / questions.length) * 100) : 0;
+    const passed = submitQuizAnswers(activeQuiz?.id || activeQuiz?._id, percentage, selectedAnswers);
 
     setScoreReport({
       totalQuestions: questions.length,
       correctCount,
       percentage,
       passed,
-      passingScore: assessment.passingScore || 70
+      passingScore: activeQuiz?.passingScore || activeQuiz?.passingMarks || 70
     });
     setIsSubmitted(true);
+  };
+
+  const handleClaimCertificate = async () => {
+    const cid = activeCourseId || assessment?.courseId || course?._id || course?.id;
+    if (!isDemoMode && isAuthenticated && cid) {
+      try {
+        setGeneratingCert(true);
+        const res = await generateCertificateApi(cid);
+        if (res && res.certificate) {
+          setActiveCertificate({
+            id: res.certificate.certificateNumber || `CERT-MOES-${Date.now()}`,
+            courseTitle: course?.title || activeQuiz?.title || "MoES Certified Program",
+            issueDate: new Date(res.certificate.createdAt || Date.now()).toISOString().split('T')[0],
+            score: scoreReport?.percentage || 85,
+            grade: (scoreReport?.percentage || 85) >= 90 ? "Distinction" : "First Class",
+            verificationHash: res.certificate.certificateNumber || "VERIFIED-GOV-IN"
+          });
+          showToast("Official e-Certificate generated successfully!", "success");
+          return;
+        }
+      } catch (err) {
+        if (err.status === 409 && err.data?.certificate) {
+          setActiveCertificate({
+            id: err.data.certificate.certificateNumber,
+            courseTitle: course?.title || activeQuiz?.title || "MoES Certified Program",
+            issueDate: new Date().toISOString().split('T')[0],
+            score: scoreReport?.percentage || 85,
+            grade: "Pass",
+            verificationHash: err.data.certificate.certificateNumber
+          });
+          showToast("Certificate retrieved!", "info");
+          return;
+        }
+        showToast(err.data?.message || "Could not generate certificate", "warning");
+      } finally {
+        setGeneratingCert(false);
+      }
+    }
+
+    // Demo mode certificate
+    setActiveCertificate({
+      id: `CERT-MOES-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+      courseTitle: course?.title || activeQuiz?.title || "Advanced Radar Meteorology",
+      issueDate: new Date().toISOString().split('T')[0],
+      score: scoreReport?.percentage || 85,
+      grade: "Distinction",
+      verificationHash: "MOES-DEMO-CERT-2026"
+    });
+    showToast("Certificate opened!", "success");
   };
 
   const formatTime = (seconds) => {
@@ -105,10 +239,65 @@ export const MCQAssessmentEngine = () => {
     setSelectedAnswers({});
     setFlaggedQuestions({});
     setCurrentQuestionIndex(0);
-    setTimeLeft((assessment?.durationMinutes || 15) * 60);
+    setTimeLeft(15 * 60);
     setIsSubmitted(false);
     setScoreReport(null);
   };
+
+  if (loadingQuiz) {
+    return (
+      <div className="max-w-5xl mx-auto py-16 text-center">
+        <Loader2 className="w-8 h-8 animate-spin text-moes-600 mx-auto" />
+        <p className="text-xs text-slate-500 mt-2">Loading assessment questions...</p>
+      </div>
+    );
+  }
+
+  if (!activeQuiz) {
+    return (
+      <div className="min-h-[400px] flex items-center justify-center p-4">
+        <div className="text-center p-8 glass-card rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md mx-auto space-y-3">
+          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto" />
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Assessment not found</h2>
+          <p className="text-sm text-slate-500">
+            {quizError || "This assessment is unavailable or could not be loaded."}
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={() => setCurrentView('trainee')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-sm transition"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Return to Dashboard</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!questions || questions.length === 0) {
+    return (
+      <div className="min-h-[400px] flex items-center justify-center p-4">
+        <div className="text-center p-8 glass-card rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md mx-auto space-y-3">
+          <HelpCircle className="w-12 h-12 text-slate-400 mx-auto" />
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">No Questions Available</h2>
+          <p className="text-sm text-slate-500">
+            This assessment currently has no published questions available for examination.
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={() => setCurrentView('trainee')}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-sm transition"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Return to Dashboard</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 animate-fadeIn">
@@ -128,9 +317,9 @@ export const MCQAssessmentEngine = () => {
                 Subject-Wise MCQ Assessment
               </span>
               <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mt-1">
-                {assessment.title}
+                {activeQuiz?.title || "MoES Competency Assessment"}
               </h1>
-              <p className="text-xs text-slate-500">{assessment.courseTitle}</p>
+              <p className="text-xs text-slate-500">{course?.title || activeQuiz?.courseTitle || "MoES Capacity Curriculum"}</p>
             </div>
           </div>
 
@@ -148,9 +337,11 @@ export const MCQAssessmentEngine = () => {
 
               <button
                 onClick={handleSubmit}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition"
+                disabled={submittingQuiz}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition flex items-center gap-1.5"
               >
-                Submit Test
+                {submittingQuiz ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                <span>Submit Test</span>
               </button>
             </div>
           )}
@@ -160,7 +351,6 @@ export const MCQAssessmentEngine = () => {
       {/* Results View */}
       {isSubmitted && scoreReport ? (
         <div className="space-y-6 animate-fadeIn">
-          {/* Result Card */}
           <div className={`rounded-2xl p-8 border shadow-xl text-center space-y-4 ${
             scoreReport.passed
               ? 'bg-gradient-to-b from-emerald-500/10 via-emerald-500/5 to-transparent border-emerald-500/40'
@@ -178,299 +368,147 @@ export const MCQAssessmentEngine = () => {
               <h2 className="text-2xl font-black text-slate-900 dark:text-white">
                 {scoreReport.passed ? "Assessment Passed with Distinction!" : "Assessment Threshold Not Met"}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
-                {scoreReport.passed
-                  ? "Congratulations! Your competency score qualifies for the MoES Certified Digital Credential."
-                  : `You scored ${scoreReport.percentage}%. The minimum passing benchmark is ${scoreReport.passingScore}%.`}
+              <p className="text-xs text-slate-500 mt-1">
+                Score: {scoreReport.percentage}% • Required Passing: {scoreReport.passingScore}%
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-4 py-2">
-              <div className="glass-card px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <span className="text-xs text-slate-500">Your Score:</span>{' '}
-                <strong className="text-lg font-black text-slate-900 dark:text-white">{scoreReport.percentage}%</strong>
-              </div>
-              <div className="glass-card px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <span className="text-xs text-slate-500">Correct Answers:</span>{' '}
-                <strong className="text-lg font-black text-emerald-600">{scoreReport.correctCount} / {scoreReport.totalQuestions}</strong>
-              </div>
-              <div className="glass-card px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
-                <span className="text-xs text-slate-500">Passing Benchmark:</span>{' '}
-                <strong className="text-lg font-black text-moes-600 dark:text-sky-400">{scoreReport.passingScore}%</strong>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <button
-                onClick={handleRetake}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-300 transition"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Retake Assessment</span>
-              </button>
-
-              {course && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              {scoreReport.passed ? (
                 <button
-                  onClick={() => setActiveFeedbackCourse(course)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-sm transition"
+                  onClick={handleClaimCertificate}
+                  disabled={generatingCert}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-md hover:from-amber-600 hover:to-amber-700 transition flex items-center gap-2"
                 >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Provide Training Feedback</span>
+                  {generatingCert ? <Loader2 className="w-4 h-4 animate-spin" /> : <Award className="w-4 h-4" />}
+                  <span>Claim & View e-Certificate</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleRetake}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-moes-600 text-white hover:bg-moes-700 transition flex items-center gap-2"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Retake Assessment</span>
                 </button>
               )}
 
               <button
                 onClick={() => setCurrentView('trainee')}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-md transition"
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 transition"
               >
-                <span>Go to Trainee Hub</span>
-                <ChevronRight className="w-4 h-4" />
+                Back to Dashboard
               </button>
-            </div>
-          </div>
-
-          {/* Detailed Question Review Breakdown */}
-          <div className="glass-card rounded-2xl p-6 border border-slate-200 dark:border-slate-800 space-y-6">
-            <h3 className="font-bold text-base text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-800 pb-3 flex items-center gap-2">
-              <HelpCircle className="w-4 h-4 text-moes-500" />
-              <span>Detailed Question Review & Scientific Rationale</span>
-            </h3>
-
-            <div className="space-y-6">
-              {questions.map((q, qIndex) => {
-                const userAns = selectedAnswers[qIndex];
-                const isCorrect = userAns === q.correctIndex;
-
-                return (
-                  <div
-                    key={q.id || qIndex}
-                    className={`p-5 rounded-2xl border text-xs space-y-3 ${
-                      isCorrect
-                        ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-900/60'
-                        : 'bg-red-50/40 dark:bg-red-950/20 border-red-300 dark:border-red-900/60'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-2">
-                        <span className="font-bold font-mono px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0">
-                          Q{qIndex + 1}
-                        </span>
-                        <h4 className="font-bold text-slate-900 dark:text-white text-sm">
-                          {q.question}
-                        </h4>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${
-                        isCorrect ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
-                      }`}>
-                        {isCorrect ? 'Correct (+1)' : 'Incorrect (0)'}
-                      </span>
-                    </div>
-
-                    {/* Options List */}
-                    <div className="space-y-1.5 pl-6">
-                      {q.options.map((opt, optIndex) => {
-                        const isChosen = userAns === optIndex;
-                        const isAnswerKey = q.correctIndex === optIndex;
-
-                        return (
-                          <div
-                            key={optIndex}
-                            className={`p-2.5 rounded-xl border flex items-center justify-between ${
-                              isAnswerKey
-                                ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-500 font-semibold text-emerald-950 dark:text-emerald-200'
-                                : isChosen && !isCorrect
-                                ? 'bg-red-100 dark:bg-red-900/40 border-red-500 font-semibold text-red-950 dark:text-red-200'
-                                : 'bg-white/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            <span>{opt}</span>
-                            {isAnswerKey && (
-                              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 ml-2">
-                                (Correct Key)
-                              </span>
-                            )}
-                            {isChosen && !isCorrect && (
-                              <span className="text-[10px] font-bold text-red-600 dark:text-red-300 ml-2">
-                                (Your Answer)
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Scientific Rationale Explanation */}
-                    {q.explanation && (
-                      <div className="mt-3 p-3 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900/50 text-sky-900 dark:text-sky-200">
-                        <p className="font-bold text-[11px] text-moes-700 dark:text-sky-300 mb-0.5">
-                          Scientific Explanation:
-                        </p>
-                        <p className="text-[11px] leading-relaxed">{q.explanation}</p>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
             </div>
           </div>
         </div>
       ) : (
-        /* Live Quiz Taking Mode */
+        /* Questions Interactive View */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* Main Question Card */}
           <div className="lg:col-span-8 space-y-6">
-            <div className="glass-card rounded-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-lg space-y-6">
-              
-              {/* Question Header */}
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-                <span className="font-bold text-xs text-moes-600 dark:text-sky-400">
-                  Question {currentQuestionIndex + 1} of {questions.length}
-                </span>
+            {currentQ && (
+              <div className="glass-card rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-md space-y-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-moes-600 dark:text-sky-400">
+                    Question {currentQuestionIndex + 1} of {questions.length}
+                  </span>
+                  <button
+                    onClick={toggleFlag}
+                    className={`flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border transition ${
+                      flaggedQuestions[currentQuestionIndex]
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 border-amber-300'
+                        : 'text-slate-500 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <Flag className="w-3.5 h-3.5" />
+                    <span>{flaggedQuestions[currentQuestionIndex] ? 'Flagged' : 'Flag for Review'}</span>
+                  </button>
+                </div>
 
-                <button
-                  onClick={toggleFlag}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                    flaggedQuestions[currentQuestionIndex]
-                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300'
-                      : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Flag className="w-3.5 h-3.5" />
-                  <span>{flaggedQuestions[currentQuestionIndex] ? 'Flagged for Review' : 'Flag Question'}</span>
-                </button>
-              </div>
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-relaxed">
+                  {currentQ.question}
+                </h2>
 
-              {/* Question Prompt */}
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-relaxed">
-                {currentQ?.question}
-              </h3>
-
-              {/* Options */}
-              <div className="space-y-3 pt-2">
-                {currentQ?.options?.map((option, optIdx) => {
-                  const isSelected = selectedAnswers[currentQuestionIndex] === optIdx;
-
-                  return (
-                    <div
-                      key={optIdx}
-                      onClick={() => handleSelectOption(optIdx)}
-                      className={`p-4 rounded-xl border cursor-pointer transition flex items-start gap-3 text-xs sm:text-sm ${
-                        isSelected
-                          ? 'border-moes-500 bg-moes-50/80 dark:bg-moes-950/60 text-moes-900 dark:text-sky-200 font-semibold shadow-sm ring-1 ring-moes-400'
-                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center font-mono text-xs shrink-0 mt-0.5 ${
-                        isSelected
-                          ? 'border-moes-600 bg-moes-600 text-white font-bold'
-                          : 'border-slate-400 text-slate-500'
-                      }`}>
-                        {String.fromCharCode(65 + optIdx)}
+                <div className="space-y-2.5 pt-2">
+                  {currentQ.options?.map((opt, optIdx) => {
+                    const isSelected = selectedAnswers[currentQuestionIndex] === optIdx;
+                    return (
+                      <div
+                        key={optIdx}
+                        onClick={() => handleSelectOption(optIdx)}
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center gap-3 text-xs ${
+                          isSelected
+                            ? 'border-moes-500 bg-moes-50/70 dark:bg-moes-950/40 text-moes-900 dark:text-sky-200 font-bold shadow-sm'
+                            : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center font-bold text-[10px] ${
+                          isSelected ? 'border-moes-600 bg-moes-600 text-white' : 'border-slate-300 text-slate-500'
+                        }`}>
+                          {String.fromCharCode(65 + optIdx)}
+                        </div>
+                        <span className="flex-1">{opt}</span>
                       </div>
-                      <span className="leading-snug">{option}</span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
 
-              {/* Bottom Navigation */}
-              <div className="flex items-center justify-between pt-6 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  disabled={currentQuestionIndex === 0}
-                  onClick={() => setCurrentQuestionIndex(prev => prev - 1)}
-                  className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  <span>Previous</span>
-                </button>
-
-                {currentQuestionIndex === questions.length - 1 ? (
+                <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
                   <button
-                    onClick={handleSubmit}
-                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition"
+                    onClick={() => setCurrentQuestionIndex(prev => Math.max(0, prev - 1))}
+                    disabled={currentQuestionIndex === 0}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 disabled:opacity-40"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Submit Assessment</span>
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Previous</span>
                   </button>
-                ) : (
-                  <button
-                    onClick={() => setCurrentQuestionIndex(prev => prev + 1)}
-                    className="flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold bg-moes-600 hover:bg-moes-700 text-white shadow-sm transition"
-                  >
-                    <span>Next Question</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
 
-            </div>
+                  <button
+                    onClick={() => setCurrentQuestionIndex(prev => Math.min(questions.length - 1, prev + 1))}
+                    disabled={currentQuestionIndex === questions.length - 1}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-moes-600 hover:bg-moes-700 disabled:opacity-40"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Right Column: Question Navigator Palette */}
+          {/* Right Question Palette */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-md space-y-4">
-              <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                Question Navigator Palette
-              </h4>
-
+            <div className="glass-card rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-md space-y-3">
+              <h3 className="font-bold text-xs uppercase tracking-wider text-slate-500">
+                Question Palette ({Object.keys(selectedAnswers).length}/{questions.length} Answered)
+              </h3>
               <div className="grid grid-cols-5 gap-2">
                 {questions.map((_, idx) => {
-                  const isCurrent = currentQuestionIndex === idx;
                   const isAnswered = selectedAnswers[idx] !== undefined;
+                  const isCurrent = currentQuestionIndex === idx;
                   const isFlagged = flaggedQuestions[idx];
 
                   return (
                     <button
                       key={idx}
                       onClick={() => setCurrentQuestionIndex(idx)}
-                      className={`h-10 rounded-xl font-mono text-xs font-bold flex flex-col items-center justify-center relative transition ${
+                      className={`h-8 rounded-lg text-xs font-bold transition flex items-center justify-center ${
                         isCurrent
-                          ? 'ring-2 ring-moes-500 shadow'
-                          : ''
-                      } ${
-                        isAnswered
+                          ? 'ring-2 ring-moes-500 bg-moes-100 dark:bg-moes-900 text-moes-700 dark:text-sky-300'
+                          : isAnswered
                           ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                          : isFlagged
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                       }`}
                     >
-                      <span>{idx + 1}</span>
-                      {isFlagged && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 absolute top-1 right-1"></span>
-                      )}
+                      {idx + 1}
                     </button>
                   );
                 })}
               </div>
-
-              {/* Legend */}
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2 text-[11px] text-slate-600 dark:text-slate-400">
-                <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded bg-emerald-600"></span>
-                  <span>Answered ({Object.keys(selectedAnswers).length})</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded bg-slate-200 dark:bg-slate-700"></span>
-                  <span>Unanswered ({questions.length - Object.keys(selectedAnswers).length})</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                  <span>Flagged for review ({Object.values(flaggedQuestions).filter(Boolean).length})</span>
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  onClick={handleSubmit}
-                  className="w-full py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition shadow"
-                >
-                  Finish & Submit
-                </button>
-              </div>
-
             </div>
           </div>
-
         </div>
       )}
 

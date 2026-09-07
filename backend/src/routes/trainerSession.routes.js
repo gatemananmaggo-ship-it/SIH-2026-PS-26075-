@@ -5,8 +5,11 @@ const {
     getTrainerSessions,
     updateSession,
     deleteSession,
+    startSession,
     completeSession,
-    publishSession
+    updateSessionRecording,
+    publishSession,
+    trainerJoinSession
 } = require("../controllers/session.controller");
 
 const authMiddleware = require("../middlewares/auth.middleware");
@@ -43,10 +46,24 @@ trainersessionrouter.delete(
 );
 
 trainersessionrouter.patch(
+    "/:sessionId/start",
+    authMiddleware,
+    roleMiddleware("trainer"),
+    startSession
+);
+
+trainersessionrouter.patch(
     "/:sessionId/complete",
     authMiddleware,
     roleMiddleware("trainer"),
     completeSession
+);
+
+trainersessionrouter.patch(
+    "/:sessionId/recording",
+    authMiddleware,
+    roleMiddleware("trainer"),
+    updateSessionRecording
 );
 
 trainersessionrouter.post(
@@ -54,6 +71,14 @@ trainersessionrouter.post(
     authMiddleware,
     roleMiddleware("trainer"),
     publishSession
+);
+
+// Trainer re-joins an in_progress session to get a fresh JaaS JWT (Reopen Classroom)
+trainersessionrouter.get(
+    "/:sessionId/join",
+    authMiddleware,
+    roleMiddleware("trainer"),
+    trainerJoinSession
 );
 
 module.exports = trainersessionrouter;

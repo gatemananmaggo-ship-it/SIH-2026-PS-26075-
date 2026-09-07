@@ -24,6 +24,7 @@ import { TrainerDashboard } from './components/trainer/TrainerDashboard';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { CoursePlayer } from './components/trainee/CoursePlayer';
 import { MCQAssessmentEngine } from './components/trainee/MCQAssessmentEngine';
+import { LiveSessionView } from './components/common/LiveSessionView';
 
 const MainContent = () => {
   const { currentView, currentRole } = useApp();
@@ -32,7 +33,7 @@ const MainContent = () => {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-[#061329] dark:text-slate-100 transition-colors duration-200">
       {/* Evaluator Quick Role Switcher */}
-      <QuickDemoBar />
+      {/* <QuickDemoBar /> */}
 
       {/* Real-time MoES Broadcast Ticker */}
       <NotificationTicker />
@@ -58,6 +59,7 @@ const MainContent = () => {
         {currentView === 'admin' && <AdminDashboard />}
         {currentView === 'player' && <CoursePlayer />}
         {currentView === 'quiz' && <MCQAssessmentEngine />}
+        {currentView === 'live-session' && <LiveSessionView />}
       </main>
 
       {/* Common Modals & Overlays */}
