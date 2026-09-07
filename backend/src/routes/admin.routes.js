@@ -27,6 +27,10 @@ const {
     adminAnalytics
 } = require("../controllers/analytics.controller");
 
+const {
+    optimizeTrainerAssignments
+} = require("../controllers/assignmentOptimization.controller");
+
 // Local Middlewres
 const authMiddleware = require("../middlewares/auth.middleware")
 const roleMiddleware = require("../middlewares/role.middleware")
@@ -60,6 +64,9 @@ adminrouter.get("/feedback",authMiddleware,roleMiddleware("admin"),getAllFeedbac
 adminrouter.patch("/courses/:courseId/competencies",authMiddleware,roleMiddleware("admin"),mapCompetenciesToCourse);
 
 adminrouter.get("/analytics",authMiddleware,roleMiddleware("admin"),adminAnalytics);
+
+// ML Trainer Assignment Optimization
+adminrouter.post("/trainer-assignments/optimize",authMiddleware,roleMiddleware("admin"),optimizeTrainerAssignments);
 
 
 module.exports= adminrouter;
