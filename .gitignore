@@ -9,6 +9,12 @@ node_modules/
 !.env.example
 *.env
 
+# Private keys & certificates
+*.pk
+*.pem
+*.key
+*.crt
+
 # Build outputs
 dist/
 build/

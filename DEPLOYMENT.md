@@ -168,8 +168,33 @@ JWT signing happens **server-side only** on EC2. The private key never touches t
 
 1. Go to [https://jaas.8x8.vc/#/apikeys](https://jaas.8x8.vc/#/apikeys)
 2. Click **Generate new key**
-3. Download the `.pem` private key file — **save it immediately**, it cannot be retrieved again
+3. Download the `.pk` private key file — **save it immediately**, it cannot be retrieved again
 4. Copy the **App ID** and **Key ID** from the dashboard
+
+### Converting the `.pk` file for `.env`
+
+The `.pk` file is PEM-encoded RSA — the same format as `.pem`, just a different extension.  
+You need to convert the multi-line key into a single-line value for `.env`:
+
+```powershell
+# PowerShell — run from the folder containing your .pk file
+$key = Get-Content "yourfile.pk" -Raw
+$oneLine = $key -replace "`r`n", "\n" -replace "`n", "\n"
+Write-Output "JAAS_PRIVATE_KEY=$oneLine"
+```
+
+Or with Node.js:
+```bash
+node -e "const fs=require('fs'); const k=fs.readFileSync('yourfile.pk','utf8'); console.log('JAAS_PRIVATE_KEY=' + k.replace(/\r?\n/g, '\\\\n'));"
+```
+
+Paste the output directly into `backend/.env`. The result looks like:
+```
+JAAS_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----
+```
+
+> The backend `jaasJwt.js` utility automatically expands `\n` → real newlines before signing.
+
 
 ### JWT Claims
 
