@@ -1,47 +1,50 @@
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import List
+
+from pydantic import BaseModel, Field, field_validator
 
 
-class TrainerInput(BaseModel):
-    id: str
-    name: str
-    skills: List[str] = []
-    experience_years: float = Field(0.0, ge=0)
-    certifications: int = Field(0, ge=0)
-    performance_rating: float = Field(0.0, ge=0.0, le=5.0)
+class Trainer(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    skills: List[str] = Field(default_factory=list)
+    experience_years: float = Field(default=0, ge=0)
+    certifications: int = Field(default=0, ge=0)
+    performance_rating: float = Field(default=0, ge=0, le=5)
     available: bool = True
 
-
-class SubjectInput(BaseModel):
-    subject_id: str
-    subject_name: str
-    required_skills: List[str] = []
-    minimum_experience: float = Field(0.0, ge=0)
-    priority: int = Field(1, ge=1, le=5)
+    @field_validator("skills")
+    @classmethod
+    def clean_skills(cls, value: List[str]) -> List[str]:
+        return [skill.strip() for skill in value if skill and skill.strip()]
 
 
-class AssignmentResult(BaseModel):
-    subject_id: str
-    subject_name: str
-    assigned_trainer_id: str
-    assigned_trainer_name: str
-    competency_score: float = Field(..., ge=0.0, le=100.0)
-    justification: str
+class Subject(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    required_skills: List[str] = Field(default_factory=list)
+
+    @field_validator("required_skills")
+    @classmethod
+    def clean_required_skills(cls, value: List[str]) -> List[str]:
+        return [skill.strip() for skill in value if skill and skill.strip()]
 
 
-class UnassignedSubject(BaseModel):
-    subject_id: str
-    subject_name: str
-    reason: str
+class AssignmentRequest(BaseModel):
+    trainers: List[Trainer] = Field(min_length=1)
+    subjects: List[Subject] = Field(min_length=1)
 
+    @field_validator("trainers")
+    @classmethod
+    def unique_trainer_ids(cls, value: List[Trainer]) -> List[Trainer]:
+        ids = [trainer.id for trainer in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Trainer IDs must be unique.")
+        return value
 
-class OptimizationRequest(BaseModel):
-    trainers: List[TrainerInput]
-    subjects: List[SubjectInput]
-
-
-class OptimizationResponse(BaseModel):
-    valid: bool
-    assignments: List[AssignmentResult]
-    unassigned_subjects: List[UnassignedSubject]
-    summary: Optional[str] = None
+    @field_validator("subjects")
+    @classmethod
+    def unique_subject_ids(cls, value: List[Subject]) -> List[Subject]:
+        ids = [subject.id for subject in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Subject IDs must be unique.")
+        return value

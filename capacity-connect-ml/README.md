@@ -1,72 +1,122 @@
-# Capacity Connect ML Service
+# CAPACITY CONNECT ML Service
 
-Internal FastAPI trainer-assignment optimizer for the CAPACITY CONNECT platform.
+Private FastAPI microservice for explainable trainer competency scoring and trainer-subject assignment optimization.
 
-## ⚠️ Important
+## Role in CAPACITY CONNECT
 
-This service is **private** — it must NEVER be exposed to the public internet directly.
-It runs locally on port `8000` and is proxied exclusively through the Express backend.
+The React frontend must **not** call this service directly.
 
----
+The Node/Express backend remains the system of record and is responsible for:
 
-## Setup
+- authentication and authorization
+- loading real trainer/competency data from MongoDB
+- mapping CAPACITY CONNECT domain data to this service's request contract
+- calling the ML service with the internal API key
+- validating the returned recommendation
+- persisting accepted assignments/sessions through the existing backend rules
 
-```bash
-cd capacity-connect-ml
-cp .env.example .env           # Fill in ML_SERVICE_KEY
-python -m venv venv
-venv\Scripts\activate          # Windows
-pip install -r requirements.txt
+Recommended deployment on AWS EC2:
+
+```text
+Netlify React Frontend
+        |
+        | HTTPS + credentials
+        v
+Node/Express Backend :5000
+        |
+        | internal HTTP + X-ML-Service-Key
+        v
+FastAPI ML Service :8000 (private / localhost only)
 ```
 
-## Run (development)
-
-```bash
-uvicorn app:app --host 127.0.0.1 --port 8000 --reload
-```
-
-## Run (production)
-
-```bash
-uvicorn app:app --host 127.0.0.1 --port 8000 --workers 2
-```
-
-## Run tests
-
-```bash
-pytest tests/ -v
-```
+MongoDB Atlas remains behind the Node backend. The ML service does not connect directly to MongoDB.
 
 ## API
 
-| Method | Endpoint | Auth |
-|--------|----------|------|
-| GET | `/health` | None |
-| POST | `/api/v1/optimize-assignment` | `X-ML-Service-Key` header |
+### Health
 
-### Request body (`POST /api/v1/optimize-assignment`)
+`GET /health`
+
+Returns:
+
+```json
+{"status":"healthy"}
+```
+
+### Optimize assignment
+
+`POST /api/v1/optimize-assignment`
+
+Header:
+
+```text
+X-ML-Service-Key: <same value as ML_SERVICE_API_KEY>
+```
+
+Request:
 
 ```json
 {
   "trainers": [
     {
-      "id": "string",
-      "name": "string",
-      "skills": ["python", "ml"],
+      "id": "trainer-id",
+      "name": "Trainer A",
+      "skills": ["Python", "Machine Learning"],
       "experience_years": 5,
-      "certifications": 2,
-      "performance_rating": 4.2,
+      "certifications": 3,
+      "performance_rating": 4.5,
       "available": true
     }
   ],
   "subjects": [
     {
-      "subject_id": "string",
-      "subject_name": "string",
-      "required_skills": ["python"],
-      "minimum_experience": 2,
-      "priority": 3
+      "id": "subject-id",
+      "name": "Machine Learning",
+      "required_skills": ["Python", "Machine Learning"]
     }
   ]
 }
 ```
+
+Response contains:
+
+- `assignments`: recommended one-to-one trainer-subject pairs
+- `unassigned_subjects`: subjects that could not be assigned
+- `competency_score`: explainable 0-100 competency score
+- `valid`: true only when every subject has an assignment
+- `reason`: safe human-readable failure/partial-result reason
+- summary counts
+
+The optimizer assigns only **available** trainers. It uses one-to-one assignment for a single optimization batch; this service does not decide whether a trainer may teach multiple sessions over time.
+
+## Environment
+
+```env
+ML_SERVICE_API_KEY=replace-with-a-long-random-secret
+```
+
+Do not commit real secrets.
+
+## Local run
+
+```bash
+python -m venv .venv
+# Windows
+.venv\\Scripts\\activate
+# Linux/macOS
+# source .venv/bin/activate
+
+pip install -r requirements.txt
+set ML_SERVICE_API_KEY=local-dev-secret
+uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+## Tests
+
+```bash
+pytest -q
+```
+
+## Notes
+
+This component is an explainable optimization engine based on weighted competency scoring plus `scipy.optimize.linear_sum_assignment`. It is not a trained predictive ML model.

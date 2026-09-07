@@ -1,126 +1,78 @@
 import pytest
-from services.optimizer import optimize_assignments, _competency_score, _skill_overlap_score
-from schemas.request_models import TrainerInput, SubjectInput
+
+from schemas.request_models import Subject, Trainer
+from services.competency import calculate_skill_match
+from services.optimizer import optimize_assignment
 
 
-# ── helpers ────────────────────────────────────────────────────────────────
-
-def make_trainer(**kwargs):
-    defaults = dict(
-        id="t1", name="Trainer One",
-        skills=["python", "ml"],
-        experience_years=5.0,
-        certifications=2,
-        performance_rating=4.0,
-        available=True,
+def trainer(
+    trainer_id="T1",
+    name="Trainer 1",
+    skills=None,
+    experience_years=5,
+    certifications=2,
+    performance_rating=4,
+    available=True,
+):
+    return Trainer(
+        id=trainer_id,
+        name=name,
+        skills=skills or [],
+        experience_years=experience_years,
+        certifications=certifications,
+        performance_rating=performance_rating,
+        available=available,
     )
-    defaults.update(kwargs)
-    return TrainerInput(**defaults)
 
 
-def make_subject(**kwargs):
-    defaults = dict(
-        subject_id="s1", subject_name="Machine Learning",
-        required_skills=["python", "ml"],
-        minimum_experience=2.0,
-        priority=3,
+def subject(subject_id="S1", name="Subject 1", required_skills=None):
+    return Subject(
+        id=subject_id,
+        name=name,
+        required_skills=required_skills or [],
     )
-    defaults.update(kwargs)
-    return SubjectInput(**defaults)
 
 
-# ── unit tests ──────────────────────────────────────────────────────────────
-
-class TestSkillOverlap:
-    def test_full_overlap(self):
-        assert _skill_overlap_score(["python", "ml"], ["python", "ml"]) == 1.0
-
-    def test_partial_overlap(self):
-        score = _skill_overlap_score(["python"], ["python", "ml"])
-        assert score == 0.5
-
-    def test_no_overlap(self):
-        assert _skill_overlap_score(["java"], ["python", "ml"]) == 0.0
-
-    def test_empty_required(self):
-        assert _skill_overlap_score(["python"], []) == 1.0
-
-    def test_case_insensitive(self):
-        assert _skill_overlap_score(["Python", "ML"], ["python", "ml"]) == 1.0
+def test_skill_match_is_case_and_whitespace_insensitive():
+    assert calculate_skill_match([" Python ", "Machine Learning"], ["python"]) == 100.0
 
 
-class TestCompetencyScore:
-    def test_score_range(self):
-        t = make_trainer(skills=["python", "ml"], experience_years=10,
-                         certifications=3, performance_rating=4.5)
-        s = make_subject(required_skills=["python", "ml"], minimum_experience=2)
-        score = _competency_score(t, s)
-        assert 0.0 <= score <= 100.0
-
-    def test_perfect_trainer(self):
-        t = make_trainer(skills=["python", "ml"], experience_years=20,
-                         certifications=5, performance_rating=5.0)
-        s = make_subject(required_skills=["python", "ml"])
-        assert _competency_score(t, s) == 100.0
-
-    def test_zero_trainer(self):
-        t = make_trainer(skills=[], experience_years=0,
-                         certifications=0, performance_rating=0.0)
-        s = make_subject(required_skills=["python"])
-        assert _competency_score(t, s) == 0.0
+def test_empty_required_skills_are_full_skill_match():
+    assert calculate_skill_match([], []) == 100.0
 
 
-class TestOptimizeAssignments:
-    def test_single_assignment(self):
-        trainers = [make_trainer()]
-        subjects = [make_subject()]
-        result = optimize_assignments(trainers, subjects)
-        assert result.valid is True
-        assert len(result.assignments) == 1
-        assert len(result.unassigned_subjects) == 0
-        assert result.assignments[0].subject_id == "s1"
-        assert result.assignments[0].assigned_trainer_id == "t1"
+def test_unavailable_trainers_are_not_assigned():
+    result = optimize_assignment(
+        [trainer(available=False), trainer(trainer_id="T2", name="Trainer 2")],
+        [subject()],
+    )
+    assert result["valid"] is True
+    assert result["assignments"][0]["trainer_id"] == "T2"
 
-    def test_unassigned_when_no_trainer(self):
-        trainers = []
-        subjects = [make_subject()]
-        result = optimize_assignments(trainers, subjects)
-        assert result.valid is False
-        assert len(result.assignments) == 0
-        assert len(result.unassigned_subjects) == 1
 
-    def test_unavailable_trainer_excluded(self):
-        trainers = [make_trainer(available=False)]
-        subjects = [make_subject()]
-        result = optimize_assignments(trainers, subjects)
-        assert result.valid is False
-        assert len(result.unassigned_subjects) == 1
+def test_all_unavailable_returns_clear_failure():
+    result = optimize_assignment(
+        [trainer(available=False)],
+        [subject()],
+    )
+    assert result["valid"] is False
+    assert result["assignments"] == []
+    assert result["unassigned_subjects"][0]["subject_id"] == "S1"
 
-    def test_minimum_experience_filter(self):
-        trainers = [make_trainer(experience_years=1.0)]
-        subjects = [make_subject(minimum_experience=5.0)]
-        result = optimize_assignments(trainers, subjects)
-        assert result.valid is False
-        assert "experience" in result.unassigned_subjects[0].reason.lower()
 
-    def test_priority_ordering(self):
-        t1 = make_trainer(id="t1", name="T1", experience_years=10, performance_rating=4.5)
-        t2 = make_trainer(id="t2", name="T2", experience_years=3, performance_rating=3.0)
-        s_high = make_subject(subject_id="s_high", subject_name="High Priority", priority=5)
-        s_low = make_subject(subject_id="s_low", subject_name="Low Priority", priority=1)
-        result = optimize_assignments([t1, t2], [s_high, s_low])
-        assert result.valid is True
-        assert len(result.assignments) == 2
-        # High priority subject should be assigned t1 (better trainer)
-        high_assignment = next(a for a in result.assignments if a.subject_id == "s_high")
-        assert high_assignment.assigned_trainer_id == "t1"
+def test_excess_subjects_are_reported_as_unassigned():
+    result = optimize_assignment(
+        [trainer()],
+        [subject("S1"), subject("S2")],
+    )
+    assert len(result["assignments"]) == 1
+    assert len(result["unassigned_subjects"]) == 1
+    assert result["valid"] is False
 
-    def test_each_trainer_assigned_once(self):
-        trainer = make_trainer()
-        subjects = [
-            make_subject(subject_id="s1", subject_name="Subject 1"),
-            make_subject(subject_id="s2", subject_name="Subject 2"),
-        ]
-        result = optimize_assignments([trainer], subjects)
-        assigned_ids = [a.assigned_trainer_id for a in result.assignments]
-        assert len(assigned_ids) == len(set(assigned_ids))  # no duplicates
+
+def test_duplicate_ids_are_rejected():
+    with pytest.raises(ValueError):
+        optimize_assignment(
+            [trainer("T1"), trainer("T1", name="Duplicate")],
+            [subject()],
+        )
